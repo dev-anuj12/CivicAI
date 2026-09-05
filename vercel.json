@@ -1,0 +1,6 @@
+{
+  "framework": "vite",
+  "installCommand": "npm install --prefix CivicAI",
+  "buildCommand": "npm run build --prefix CivicAI",
+  "outputDirectory": "CivicAI/dist"
+}
