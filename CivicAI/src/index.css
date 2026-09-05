@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #f8fafc;
+  --color-surface-dim: #e2e8f0;
+  --color-surface-bright: #ffffff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f8fafc;
+  --color-surface-container: #f1f5f9;
+  --color-surface-container-high: #e2e8f0;
+  --color-surface-container-highest: #cbd5e1;
+  --color-surface-variant: #f1f5f9;
+  --color-on-surface: #0f172a;
+  --color-on-surface-variant: #64748b;
+  --color-inverse-surface: #0f172a;
+  --color-inverse-on-surface: #f8fafc;
+  --color-outline: #cbd5e1;
+  --color-outline-variant: #e2e8f0;
+  --color-surface-tint: #4f46e5;
+
+  --color-primary: #4f46e5;
+  --color-primary-container: #4338ca;
+  --color-on-primary: #ffffff;
+  --color-on-primary-container: #eef2ff;
+  --color-primary-fixed: #e0e7ff;
+  --color-primary-fixed-dim: #c7d2fe;
+  --color-on-primary-fixed: #312e81;
+  --color-on-primary-fixed-variant: #4338ca;
+  --color-inverse-primary: #818cf8;
+
+  --color-secondary: #10b981;
+  --color-secondary-container: #059669;
+  --color-on-secondary: #ffffff;
+  --color-on-secondary-container: #ecfdf5;
+  --color-secondary-fixed: #d1fae5;
+  --color-secondary-fixed-dim: #a7f3d0;
+  --color-on-secondary-fixed: #064e3b;
+  --color-on-secondary-fixed-variant: #047857;
+
+  --color-tertiary: #d97706;
+  --color-tertiary-container: #b45309;
+  --color-on-tertiary: #ffffff;
+  --color-on-tertiary-container: #fffbeb;
+  --color-tertiary-fixed: #fef3c7;
+  --color-tertiary-fixed-dim: #fde68a;
+  --color-on-tertiary-fixed: #78350f;
+  --color-on-tertiary-fixed-variant: #92400e;
+
+  --color-error: #ef4444;
+  --color-error-container: #fee2e2;
+  --color-on-error: #ffffff;
+  --color-on-error-container: #991b1b;
+
+  --font-display-hero: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-headline-xl: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-headline-lg: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-headline-md: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-stat-metric: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-body-lg: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body-base: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body-sm: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-label-badge: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-label-code: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  html, body {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #f8fafc;
+    color: #0f172a;
+  }
+  body {
+    overscroll-behavior-y: none;
+    min-height: max(884px, 100dvh);
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 0.8; }
+  100% { transform: translateY(240px); opacity: 0; }
+}
+
+.animate-scan {
+  animation: scanline 1.4s ease-in-out infinite;
+}
+
+@keyframes confetti-fall {
+  0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(105vh) rotate(720deg); opacity: 0; }
+}
+
+.confetti-piece {
+  position: fixed;
+  top: 0;
+  width: 9px;
+  height: 14px;
+  z-index: 100;
+  pointer-events: none;
+  animation: confetti-fall 3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes pulseGps {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.45); opacity: 0.4; }
+}
+
+.gps-beacon-ring {
+  animation: pulseGps 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

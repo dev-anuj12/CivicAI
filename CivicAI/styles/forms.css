@@ -1,0 +1,355 @@
+/* =============================================================================
+   CIVICAI: Multi-Step Forms, Dynamic Category Fields & Location Map
+   ============================================================================= */
+
+/* Multi-Step Wizard Progress Bar */
+.wizard-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2.5rem;
+  position: relative;
+}
+
+.wizard-progress::before {
+  content: '';
+  position: absolute;
+  top: 20px;
+  left: 30px;
+  right: 30px;
+  height: 3px;
+  background: var(--neutral-200);
+  z-index: 1;
+}
+
+.wizard-step-item {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+}
+
+.wizard-step-circle {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-full);
+  background: white;
+  border: 2px solid var(--neutral-300);
+  color: var(--neutral-500);
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-normal);
+}
+
+.wizard-step-item.active .wizard-step-circle {
+  border-color: var(--primary-600);
+  background: var(--primary-600);
+  color: white;
+  box-shadow: 0 0 0 4px var(--primary-100);
+}
+
+.wizard-step-item.completed .wizard-step-circle {
+  border-color: var(--primary-600);
+  background: var(--primary-700);
+  color: white;
+}
+
+.wizard-step-label {
+  font-size: 0.825rem;
+  font-weight: 600;
+  color: var(--neutral-500);
+  transition: color var(--transition-fast);
+}
+
+.wizard-step-item.active .wizard-step-label {
+  color: var(--primary-800);
+}
+
+/* Form Groups & Controls */
+.form-card {
+  background: white;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-xl);
+  padding: 2.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 640px) {
+  .form-card { padding: 1.5rem; }
+  .wizard-step-label { display: none; }
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+}
+
+@media (max-width: 640px) {
+  .form-row { grid-template-columns: 1fr; }
+}
+
+.form-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--neutral-800);
+  margin-bottom: 0.5rem;
+}
+
+.form-label-required::after {
+  content: ' *';
+  color: var(--color-critical);
+}
+
+.form-hint {
+  font-size: 0.775rem;
+  color: var(--neutral-500);
+  font-weight: 400;
+}
+
+.form-control {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--neutral-900);
+  background-color: var(--neutral-50);
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+
+.form-control:focus {
+  outline: none;
+  background-color: white;
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 3px var(--primary-100);
+}
+
+.form-control::placeholder {
+  color: var(--neutral-400);
+}
+
+textarea.form-control {
+  min-height: 110px;
+  resize: vertical;
+}
+
+/* Category Cards Selector */
+.category-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 768px) {
+  .category-selector-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .category-selector-grid { grid-template-columns: 1fr; }
+}
+
+.category-radio-card {
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  background: white;
+  transition: all var(--transition-fast);
+}
+
+.category-radio-card:hover {
+  border-color: var(--primary-300);
+  background: var(--primary-50);
+}
+
+.category-radio-card.selected {
+  border-color: var(--primary-600);
+  background: var(--primary-50);
+  box-shadow: 0 0 0 2px var(--primary-600);
+}
+
+.category-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  background: var(--neutral-100);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--neutral-700);
+  flex-shrink: 0;
+}
+
+.category-radio-card.selected .category-icon {
+  background: var(--primary-700);
+  color: white;
+}
+
+/* Severity Pill Selector */
+.severity-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .severity-selector { grid-template-columns: repeat(2, 1fr); }
+}
+
+.severity-pill-label {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  text-align: center;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: all var(--transition-fast);
+  background: white;
+}
+
+.severity-pill-label:hover {
+  background: var(--neutral-50);
+}
+
+.severity-pill-label.selected[data-severity="Low"] {
+  background: #ecfdf5;
+  border-color: #059669;
+  color: #059669;
+}
+
+.severity-pill-label.selected[data-severity="Medium"] {
+  background: #fffbeb;
+  border-color: #d97706;
+  color: #d97706;
+}
+
+.severity-pill-label.selected[data-severity="High"] {
+  background: #fff7ed;
+  border-color: #ea580c;
+  color: #ea580c;
+}
+
+.severity-pill-label.selected[data-severity="Critical"] {
+  background: #fef2f2;
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+/* Dynamic Category Specific Fields */
+.dynamic-fields-card {
+  background: var(--neutral-50);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Location Picker & Leaflet Map */
+.location-picker-box {
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: white;
+}
+
+.location-map-container {
+  height: 280px;
+  width: 100%;
+  position: relative;
+  z-index: 10;
+  background: var(--neutral-100);
+}
+
+.location-toolbar {
+  padding: 0.85rem 1.25rem;
+  background: white;
+  border-bottom: 1px solid var(--neutral-200);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.location-coord-badge {
+  font-family: var(--font-mono);
+  font-size: 0.775rem;
+  background: var(--neutral-100);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--neutral-600);
+}
+
+/* Review Step Summary Sheet */
+.review-summary-card {
+  background: white;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.review-header {
+  background: linear-gradient(135deg, var(--primary-900) 0%, var(--primary-700) 100%);
+  color: white;
+  padding: 1.75rem;
+}
+
+.review-body {
+  padding: 1.75rem;
+}
+
+.review-item-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .review-item-grid { grid-template-columns: 1fr; }
+}
+
+.review-item {
+  border-bottom: 1px solid var(--neutral-100);
+  padding-bottom: 0.75rem;
+}
+
+.review-item-label {
+  font-size: 0.775rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--neutral-500);
+  margin-bottom: 0.25rem;
+}
+
+.review-item-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--neutral-900);
+}

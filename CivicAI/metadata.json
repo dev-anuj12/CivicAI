@@ -1,0 +1,6 @@
+{
+  "name": "CivicAI - Civic Response & Municipal Triage",
+  "description": "AI-powered civic issue reporting, geospatial response tracking, and municipal triage platform with real-time audit log.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
