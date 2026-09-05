@@ -25,21 +25,21 @@ export const SecretAdminGateModal: React.FC<SecretAdminGateModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
     setError('');
     setIsVerifying(true);
-
-    setTimeout(() => {
-      const res = AuthService.unlockAdminViaCredentials(password, email);
+    try {
+      const res = await AuthService.unlockAdminViaCredentials(password, email);
       if (res.success && res.user) {
         onSuccess(res.user);
-        onShowToast(`Super Admin Authenticated: ${res.user.fullName} 👑`, 'admin_panel_settings');
+        onShowToast(`Municipal administrator authenticated: ${res.user.fullName}`, 'admin_panel_settings');
         onClose();
       } else {
         setError(res.error || 'Authentication failed. Unauthorized access prohibited.');
       }
+    } finally {
       setIsVerifying(false);
-    }, 450);
+    }
   };
 
   return (
@@ -56,7 +56,7 @@ export const SecretAdminGateModal: React.FC<SecretAdminGateModalProps> = ({
         </div>
 
         <div className="text-xs text-slate-300 leading-relaxed">
-          Exclusive master administrator command gate. Enter authorized Super Admin credentials.
+          Enter the email and password of an approved Supabase municipal administrator.
         </div>
 
         <div className="space-y-3">
@@ -71,14 +71,14 @@ export const SecretAdminGateModal: React.FC<SecretAdminGateModalProps> = ({
                 setEmail(e.target.value);
                 setError('');
               }}
-              placeholder="anujvishwakarm1308@gmail.com"
+              placeholder="admin@yourcity.gov.in"
               className="w-full bg-slate-800 text-white text-xs p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
             />
           </div>
 
           <div>
             <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">
-              Master Password
+              Administrator Password
             </label>
             <input
               type="password"

@@ -57,10 +57,38 @@ npx serve .
 
 Navigate to `http://localhost:3000`.
 
-### 2. Supabase Cloud Configuration (Optional)
-To connect your own live Supabase project:
-1. Run `database/schema.sql` inside your **Supabase SQL Editor**.
-2. Go to **Settings / Profile** inside CivicAI and enter your `Supabase URL` and `Supabase Anon Key`.
+### 2. Shared Supabase Cloud Configuration (Required for multi-device reports)
+
+The application no longer stores reports only in a browser. Configure one shared
+Supabase project so a report submitted from any phone or laptop appears in the
+admin dashboard.
+
+1. Create a Supabase project and run the complete [`database/schema.sql`](database/schema.sql)
+   file in **SQL Editor**.
+2. In **Authentication → URL Configuration**, add your Vercel URL to **Site URL**
+   and **Redirect URLs**. For the simplest first test, turn off **Confirm email**
+   in Authentication → Providers → Email; otherwise new users must verify their
+   email before signing in.
+3. Copy `CivicAI/.env.example` to `CivicAI/.env` and fill in the Supabase URL and
+   anon key for local development. Never commit this file.
+4. In **Vercel → Project → Settings → Environment Variables**, add these values
+   for **Production**, then redeploy:
+
+   | Name | Value |
+   | --- | --- |
+   | `VITE_SUPABASE_URL` | Supabase Project URL |
+   | `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key — server only, never `VITE_` |
+   | `VITE_SUPER_ADMIN_EMAIL` | Your administrator email (optional convenience only) |
+
+5. Create your own account through CivicAI, then run the final commented `UPDATE`
+   command at the bottom of `database/schema.sql`, substituting your email. This
+   grants the first Super Admin account. That account can create other municipal
+   officers from the dashboard.
+
+`VITE_SUPABASE_ANON_KEY` is intentionally public in a Vite application. The
+database schema's Row Level Security policies protect the data. The service-role
+key is private and is used only by the Vercel `/api/admin-officers` function.
 
 ### 3. Google Gemini Vision Key (Optional)
 To enable live Gemini Vision Multimodal scanning with your own API key, go to **Profile / Settings** inside CivicAI and paste your `Gemini API Key`.

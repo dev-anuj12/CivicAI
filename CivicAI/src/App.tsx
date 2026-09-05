@@ -19,6 +19,7 @@ import {
   updateReportCrew,
   updateReportStatus,
 } from './services/supabaseClient';
+import { isLiveSupabaseConfigured } from './services/supabaseConfig';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('citizen-portal');
@@ -47,20 +48,33 @@ export default function App() {
     }, 3800);
   };
 
-  // 1. Initial Load: Load persistent auth session, reports, and notifications
+  // 1. Restore authenticated cloud session and keep the municipal ledger current.
   useEffect(() => {
-    const user = AuthService.getCurrentUser();
-    if (user) {
-      setCurrentUser(user);
-      if (user.role === 'admin' || user.role === 'superadmin') {
-        setUserRole('admin');
-      }
-    }
+    let isMounted = true;
 
-    // Fetch reports
-    fetchAllReports().then((data) => {
-      setReports(data);
-    });
+    const restoreUser = async () => {
+      const user = await AuthService.restoreSession();
+      if (user && isMounted) {
+        setCurrentUser(user);
+        if (user.role === 'admin' || user.role === 'superadmin') {
+          setUserRole('admin');
+        }
+      }
+    };
+
+    const loadReports = async (quiet = false) => {
+      try {
+        const data = await fetchAllReports();
+        if (isMounted) setReports(data);
+      } catch (error) {
+        if (!quiet && isMounted) {
+          showToast(error instanceof Error ? error.message : 'Could not load shared reports.', 'error');
+        }
+      }
+    };
+
+    restoreUser();
+    loadReports();
 
     // Fetch notifications
     fetchNotifications().then((notifs) => {
@@ -80,8 +94,17 @@ export default function App() {
         setIsSecretAdminGateOpen(true);
       }
     };
+    const handleWindowFocus = () => loadReports(true);
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('focus', handleWindowFocus);
+    const refreshInterval = isLiveSupabaseConfigured() ? window.setInterval(() => loadReports(true), 15_000) : undefined;
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('focus', handleWindowFocus);
+      if (refreshInterval) window.clearInterval(refreshInterval);
+    };
   }, []);
 
   // Handle Role Change
@@ -107,23 +130,31 @@ export default function App() {
 
   // Update Status
   const handleUpdateStatus = async (id: string, newStatus: IncidentStatus, comment?: string) => {
-    const updated = await updateReportStatus(id, newStatus, currentUser?.fullName || 'Municipal Admin', comment);
-    if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
-      const refreshedNotifs = await fetchNotifications();
-      setNotifications(refreshedNotifs);
-      setUnreadNotifs(true);
+    try {
+      const updated = await updateReportStatus(id, newStatus, currentUser?.fullName || 'Municipal Admin', comment);
+      if (updated) {
+        setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
+        const refreshedNotifs = await fetchNotifications();
+        setNotifications(refreshedNotifs);
+        setUnreadNotifs(true);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not update this report.', 'error');
     }
   };
 
   // Update Crew
   const handleUpdateCrew = async (id: string, crew: string, directive?: string) => {
-    const updated = await updateReportCrew(id, crew, directive);
-    if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
-      const refreshedNotifs = await fetchNotifications();
-      setNotifications(refreshedNotifs);
-      setUnreadNotifs(true);
+    try {
+      const updated = await updateReportCrew(id, crew, directive);
+      if (updated) {
+        setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
+        const refreshedNotifs = await fetchNotifications();
+        setNotifications(refreshedNotifs);
+        setUnreadNotifs(true);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not dispatch the crew.', 'error');
     }
   };
 

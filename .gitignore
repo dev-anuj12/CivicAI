@@ -1,0 +1,12 @@
+# Local credentials must never be committed.
+.env
+.env.local
+.env.*.local
+CivicAI/.env
+CivicAI/.env.local
+CivicAI/.env.*.local
+
+node_modules/
+CivicAI/node_modules/
+dist/
+CivicAI/dist/

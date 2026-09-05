@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CivicReport, IncidentCategory, IncidentSeverity, IncidentStatus, UserProfile } from '../types';
 import { CIVIC_CATEGORIES } from '../data/mockData';
-import { AuthService, MASTER_ADMIN_EMAIL } from '../services/authService';
+import { AuthService } from '../services/authService';
 
 interface AdminCommandCenterViewProps {
   currentUser: UserProfile | null;
@@ -18,9 +18,7 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
   onUpdateReportStatus,
   onUpdateReportCrew,
 }) => {
-  const isSuperAdmin =
-    currentUser?.email?.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase() ||
-    Boolean(currentUser?.isSuperAdmin);
+  const isSuperAdmin = Boolean(currentUser?.isSuperAdmin);
 
   const [activeView, setActiveView] = useState<'triage' | 'officers'>('triage');
 
@@ -64,9 +62,9 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
   const [onboardError, setOnboardError] = useState('');
 
   // Load created admins list
-  const refreshOfficersList = () => {
+  const refreshOfficersList = async () => {
     if (currentUser?.email) {
-      const list = AuthService.getAdminsList(currentUser.email);
+      const list = await AuthService.getAdminsList(currentUser.email);
       setOfficersList(list);
     }
   };
@@ -85,13 +83,13 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
   };
 
   // Handle Creating New Admin
-  const handleCreateOfficer = (e: React.FormEvent) => {
+  const handleCreateOfficer = async (e: React.FormEvent) => {
     e.preventDefault();
     setOnboardError('');
     if (!currentUser?.email) return;
 
     setIsCreatingOfficer(true);
-    const res = AuthService.createAdminBySuperAdmin(currentUser.email, {
+    const res = await AuthService.createAdminBySuperAdmin(currentUser.email, {
       fullName: officerName,
       email: officerEmail,
       department: officerDept,
@@ -117,9 +115,9 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
   };
 
   // Toggle Admin Status
-  const handleToggleAdminStatus = (adminId: string) => {
+  const handleToggleAdminStatus = async (adminId: string) => {
     if (!currentUser?.email) return;
-    const res = AuthService.toggleAdminStatus(currentUser.email, adminId);
+    const res = await AuthService.toggleAdminStatus(currentUser.email, adminId);
     if (res.success) {
       refreshOfficersList();
       onShowToast(`Administrator account status set to ${res.status?.toUpperCase()}`, 'toggle_on');
@@ -591,7 +589,7 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                   Authorized Municipal Administrators Directory
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Governed under Super Administrator {MASTER_ADMIN_EMAIL}
+                  Governed through Supabase Super Admin access
                 </p>
               </div>
               <button

@@ -9,7 +9,7 @@ interface ReportIssueFlowViewProps {
   currentUser: UserProfile | null;
   onNavigate: (tab: TabType) => void;
   onShowToast: (msg: string, icon?: string) => void;
-  onSubmitNewReport: (report: Partial<CivicReport>) => void;
+  onSubmitNewReport: (report: Partial<CivicReport>) => Promise<void>;
   onOpenAuthModal: () => void;
 }
 
@@ -146,13 +146,13 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
     onShowToast('Compressing evidence & registering on municipal ledger...', 'hourglass_top');
 
     try {
-      // Store image via Supabase Storage or persistent data URL
+      // Store image before creating the report. Cloud failures stop the success screen.
       let finalImageUrl = photoSrc;
       if (photoFile) {
         finalImageUrl = await uploadImage(photoFile);
       }
 
-      const generatedId = `CIV-2026-${Math.floor(10000 + Math.random() * 89999)}`;
+      const generatedId = `CIV-${new Date().getFullYear()}-${crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`;
 
       const newReport: CivicReport = {
         id: generatedId,
@@ -211,7 +211,7 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
         ],
       };
 
-      onSubmitNewReport(newReport);
+      await onSubmitNewReport(newReport);
       setSubmittedTicketId(generatedId);
       onShowToast(`Report ${generatedId} logged successfully!`, 'verified');
     } catch (err) {
