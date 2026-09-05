@@ -6,8 +6,15 @@ export interface SupabaseSession {
 
 const SESSION_KEY = 'civicai_supabase_session_v1';
 
-export const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
-export const SUPABASE_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+const DEFAULT_SUPABASE_URL = 'https://lsyupqpuhcnzchxcujtx.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_k8U-vLhmoFvLTJ2rYZPD5g_s9XI-enE';
+
+export const SUPABASE_URL = (
+  (import.meta.env?.VITE_SUPABASE_URL as string) || DEFAULT_SUPABASE_URL
+).replace(/\/$/, '');
+
+export const SUPABASE_ANON_KEY =
+  (import.meta.env?.VITE_SUPABASE_ANON_KEY as string) || DEFAULT_SUPABASE_ANON_KEY;
 
 export const isLiveSupabaseConfigured = (): boolean =>
   Boolean(

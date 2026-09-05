@@ -11,8 +11,9 @@ import {
 
 const CURRENT_USER_KEY = 'civicai_current_user_v3';
 
-// An email is harmless to expose in a client build. Passwords and service keys are never kept here.
-export const MASTER_ADMIN_EMAIL = ((import.meta as any).env?.VITE_SUPER_ADMIN_EMAIL || '').trim();
+export const MASTER_ADMIN_EMAIL = (
+  (import.meta.env?.VITE_SUPER_ADMIN_EMAIL as string) || 'anujvishwakarm1308@gmail.com'
+).trim();
 
 type AuthResult = { success: boolean; user?: UserProfile; error?: string };
 
