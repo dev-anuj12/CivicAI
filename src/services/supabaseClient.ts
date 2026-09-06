@@ -1,4 +1,4 @@
-import { CivicReport, IncidentSeverity, IncidentStatus, NotificationItem } from '../types';
+import { CivicReport, DepartmentKPIs, DepartmentStats, IncidentSeverity, IncidentStatus, NotificationItem } from '../types';
 import { AuthService } from './authService';
 import {
   getResponseError,
@@ -131,6 +131,8 @@ function mapSupabaseRowToReport(row: any): CivicReport {
     categoryMetadata: row.category_metadata || {},
     auditTrail: Array.isArray(row.audit_trail) && row.audit_trail.length ? row.audit_trail : defaultAuditTrail(row),
     comments: Array.isArray(row.comments) ? row.comments : [],
+    createdAt: row.created_at || new Date().toISOString(),
+    resolvedAt: row.resolved_at || undefined,
   };
 }
 
@@ -416,4 +418,153 @@ export async function addNotification(notif: NotificationItem): Promise<void> {
 export async function markAllNotificationsRead(): Promise<void> {
   const current = PersistentStore.get<NotificationItem[]>(STORAGE_KEYS.NOTIFICATIONS, []);
   PersistentStore.set(STORAGE_KEYS.NOTIFICATIONS, current.map((item) => ({ ...item, isRead: true })));
+}
+
+// -----------------------------------------------------------------------------
+// Real Department Analytics & Metrics Calculations
+// -----------------------------------------------------------------------------
+export function formatHoursToReadable(hours: number): string {
+  if (hours <= 0 || isNaN(hours)) return 'N/A';
+  if (hours < 1) return `${Math.round(hours * 60)} mins`;
+  if (hours < 24) return `${hours.toFixed(1)} hrs`;
+  const days = hours / 24;
+  return `${days.toFixed(1)} days`;
+}
+
+function getSlaHours(priority: IncidentSeverity): number {
+  switch (priority) {
+    case 'CRITICAL':
+      return 24;
+    case 'HIGH':
+      return 48;
+    case 'MEDIUM':
+      return 72;
+    case 'LOW':
+    default:
+      return 96;
+  }
+}
+
+export function isReportOverdue(report: CivicReport): boolean {
+  if (!report.createdAt) return false;
+  const createdMs = new Date(report.createdAt).getTime();
+  if (isNaN(createdMs)) return false;
+
+  const slaMs = getSlaHours(report.priority) * 3600 * 1000;
+
+  if (report.status === 'RESOLVED') {
+    if (!report.resolvedAt) return false;
+    const resolvedMs = new Date(report.resolvedAt).getTime();
+    if (isNaN(resolvedMs)) return false;
+    return resolvedMs - createdMs > slaMs;
+  }
+
+  return Date.now() - createdMs > slaMs;
+}
+
+export function calculateDepartmentAnalytics(reports: CivicReport[]): DepartmentStats[] {
+  const departmentMap = new Map<string, CivicReport[]>();
+
+  // Group reports by department dynamically
+  reports.forEach((r) => {
+    const dept = (r.department || 'Municipal Grievance Command').trim();
+    if (!departmentMap.has(dept)) {
+      departmentMap.set(dept, []);
+    }
+    departmentMap.get(dept)!.push(r);
+  });
+
+  const stats: DepartmentStats[] = [];
+
+  departmentMap.forEach((deptReports, deptName) => {
+    const total = deptReports.length;
+    const open = deptReports.filter((r) => r.status === 'REPORTED' || r.status === 'UNDER REVIEW').length;
+    const inProgress = deptReports.filter((r) => r.status === 'ASSIGNED' || r.status === 'IN PROGRESS').length;
+    const resolvedReports = deptReports.filter((r) => r.status === 'RESOLVED');
+    const resolved = resolvedReports.length;
+    const critical = deptReports.filter((r) => r.priority === 'CRITICAL').length;
+    const highPriority = deptReports.filter((r) => r.priority === 'HIGH').length;
+    const overdue = deptReports.filter(isReportOverdue).length;
+
+    const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+
+    // Calculate resolution time
+    let totalResolvedHours = 0;
+    let validResolvedCount = 0;
+
+    resolvedReports.forEach((r) => {
+      if (r.createdAt && r.resolvedAt) {
+        const start = new Date(r.createdAt).getTime();
+        const end = new Date(r.resolvedAt).getTime();
+        if (!isNaN(start) && !isNaN(end) && end >= start) {
+          totalResolvedHours += (end - start) / (1000 * 3600);
+          validResolvedCount++;
+        }
+      }
+    });
+
+    const avgResolutionHours = validResolvedCount > 0 ? totalResolvedHours / validResolvedCount : 0;
+
+    stats.push({
+      department: deptName,
+      totalComplaints: total,
+      open,
+      inProgress,
+      resolved,
+      critical,
+      highPriority,
+      resolutionRate,
+      avgResolutionTimeHours: Math.round(avgResolutionHours * 10) / 10,
+      avgResolutionTimeFormatted: formatHoursToReadable(avgResolutionHours),
+      overdueComplaints: overdue,
+    });
+  });
+
+  // Sort by total complaints descending
+  return stats.sort((a, b) => b.totalComplaints - a.totalComplaints);
+}
+
+export function calculateOverallKPIs(reports: CivicReport[], selectedDepartment?: string): DepartmentKPIs {
+  const filtered =
+    selectedDepartment && selectedDepartment !== 'all'
+      ? reports.filter((r) => r.department === selectedDepartment)
+      : reports;
+
+  const total = filtered.length;
+  const open = filtered.filter((r) => r.status === 'REPORTED' || r.status === 'UNDER REVIEW').length;
+  const inProgress = filtered.filter((r) => r.status === 'ASSIGNED' || r.status === 'IN PROGRESS').length;
+  const resolvedList = filtered.filter((r) => r.status === 'RESOLVED');
+  const resolved = resolvedList.length;
+  const critical = filtered.filter((r) => r.priority === 'CRITICAL').length;
+  const high = filtered.filter((r) => r.priority === 'HIGH').length;
+  const overdue = filtered.filter(isReportOverdue).length;
+
+  let totalResolvedHours = 0;
+  let validResolvedCount = 0;
+
+  resolvedList.forEach((r) => {
+    if (r.createdAt && r.resolvedAt) {
+      const start = new Date(r.createdAt).getTime();
+      const end = new Date(r.resolvedAt).getTime();
+      if (!isNaN(start) && !isNaN(end) && end >= start) {
+        totalResolvedHours += (end - start) / (1000 * 3600);
+        validResolvedCount++;
+      }
+    }
+  });
+
+  const avgHours = validResolvedCount > 0 ? totalResolvedHours / validResolvedCount : 0;
+
+  return {
+    totalComplaints: total,
+    openComplaints: open,
+    inProgressComplaints: inProgress,
+    resolvedComplaints: resolved,
+    criticalComplaints: critical,
+    highPriorityComplaints: high,
+    overallResolutionRate: total > 0 ? Math.round((resolved / total) * 100) : 0,
+    avgResolutionHours: Math.round(avgHours * 10) / 10,
+    avgResolutionFormatted: formatHoursToReadable(avgHours),
+    overdueComplaints: overdue,
+  };
 }

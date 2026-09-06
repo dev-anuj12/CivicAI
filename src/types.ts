@@ -89,6 +89,35 @@ export interface CivicReport {
   aiExplanation?: string;
   auditTrail: AuditStep[];
   comments: CitizenComment[];
+  createdAt?: string;
+  resolvedAt?: string;
+}
+
+export interface DepartmentStats {
+  department: string;
+  totalComplaints: number;
+  open: number;
+  inProgress: number;
+  resolved: number;
+  critical: number;
+  highPriority: number;
+  resolutionRate: number; // percentage 0-100
+  avgResolutionTimeHours: number; // in hours
+  avgResolutionTimeFormatted: string;
+  overdueComplaints: number;
+}
+
+export interface DepartmentKPIs {
+  totalComplaints: number;
+  openComplaints: number;
+  inProgressComplaints: number;
+  resolvedComplaints: number;
+  criticalComplaints: number;
+  highPriorityComplaints: number;
+  overallResolutionRate: number;
+  avgResolutionHours: number;
+  avgResolutionFormatted: string;
+  overdueComplaints: number;
 }
 
 export interface NotificationItem {

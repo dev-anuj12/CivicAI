@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { CivicReport, IncidentCategory, IncidentSeverity, IncidentStatus, UserProfile } from '../types';
 import { CIVIC_CATEGORIES } from '../data/mockData';
 import { AuthService } from '../services/authService';
+import { DepartmentAnalyticsView } from './DepartmentAnalyticsView';
+import { CivicGisMap } from './CivicGisMap';
 
 interface AdminCommandCenterViewProps {
   currentUser: UserProfile | null;
@@ -20,7 +22,7 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
 }) => {
   const isSuperAdmin = Boolean(currentUser?.isSuperAdmin);
 
-  const [activeView, setActiveView] = useState<'triage' | 'officers'>('triage');
+  const [activeView, setActiveView] = useState<'triage' | 'analytics' | 'map' | 'officers'>('triage');
 
   // Triage state
   const [searchQuery, setSearchQuery] = useState('');
@@ -228,39 +230,65 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
           </div>
         </div>
 
-        {/* Super Admin Top View Switcher */}
-        {isSuperAdmin && (
-          <div className="flex bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 gap-2 mt-1">
-            <button
-              type="button"
-              onClick={() => setActiveView('triage')}
-              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                activeView === 'triage'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[18px]">rule_folder</span>
-              <span>Civic Incidents & Triage ({reports.length})</span>
-            </button>
+        {/* Admin Navigation View Switcher */}
+        <div className="flex flex-wrap bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 gap-2 mt-1">
+          <button
+            type="button"
+            onClick={() => setActiveView('triage')}
+            className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              activeView === 'triage'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">rule_folder</span>
+            <span>Triage & Incidents ({reports.length})</span>
+          </button>
 
+          <button
+            type="button"
+            onClick={() => setActiveView('analytics')}
+            className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              activeView === 'analytics'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">analytics</span>
+            <span>Department Analytics</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView('map')}
+            className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              activeView === 'map'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">map</span>
+            <span>Interactive GIS Map</span>
+          </button>
+
+          {isSuperAdmin && (
             <button
               type="button"
               onClick={() => {
                 setActiveView('officers');
                 refreshOfficersList();
               }}
-              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
                 activeView === 'officers'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
               <span className="material-symbols-outlined text-[18px]">manage_accounts</span>
-              <span>👑 Super Admin: Officer Provisioning ({officersList.length})</span>
+              <span>👑 Super Admin ({officersList.length})</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Real Dynamic Metrics (Shown on triage tab) */}
         {activeView === 'triage' && (
@@ -437,7 +465,38 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
       )}
 
       {/* =====================================================================
-          TAB 2: SUPER ADMIN OFFICER PROVISIONING (Exclusive)
+          TAB 2: DEPARTMENT ANALYTICS MODULE
+         ===================================================================== */}
+      {activeView === 'analytics' && (
+        <DepartmentAnalyticsView
+          reports={reports}
+          onSelectReport={(report) => {
+            setSelectedReport(report);
+            setAiActionPlan(null);
+            setActiveView('triage');
+          }}
+          onShowToast={onShowToast}
+        />
+      )}
+
+      {/* =====================================================================
+          TAB 3: INTERACTIVE CIVIC GIS MAP
+         ===================================================================== */}
+      {activeView === 'map' && (
+        <CivicGisMap
+          reports={reports}
+          onSelectReport={(report) => {
+            setSelectedReport(report);
+            setAiActionPlan(null);
+            setActiveView('triage');
+          }}
+          title="Interactive Civic Issue GIS Command Map"
+          subtitle="Real-time incident clustering, heatmap density, priority pins, and multi-dimensional spatial filtering."
+        />
+      )}
+
+      {/* =====================================================================
+          TAB 4: SUPER ADMIN OFFICER PROVISIONING (Exclusive)
          ===================================================================== */}
       {activeView === 'officers' && isSuperAdmin && (
         <div className="space-y-6 animate-in fade-in">
