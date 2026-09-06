@@ -45,8 +45,29 @@ export function clearStoredSession(): void {
 
 async function getErrorMessage(response: Response): Promise<string> {
   try {
-    const body = await response.json();
-    return body.message || body.error_description || body.error || `Request failed (${response.status})`;
+    const text = await response.text();
+    if (!text) return `Request failed (${response.status})`;
+    try {
+      const body = JSON.parse(text);
+      if (typeof body === 'string') return body;
+      const msg =
+        body.msg ||
+        body.message ||
+        body.error_description ||
+        body.error ||
+        body.hint;
+      if (msg) return String(msg);
+    } catch {
+      // response was not JSON
+    }
+
+    if (response.status === 404) {
+      return 'The requested authentication or database service was not found (404). Please verify your Supabase configuration.';
+    }
+    if (response.status === 401 || response.status === 403) {
+      return 'Invalid credentials or unauthorized access.';
+    }
+    return `Request failed (${response.status})`;
   } catch {
     return `Request failed (${response.status})`;
   }

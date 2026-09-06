@@ -4,6 +4,8 @@
  * VITE_ prefix or be committed to git.
  */
 
+import crypto from 'crypto';
+
 const SUPABASE_URL = (process.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -56,7 +58,7 @@ function generatedPassword() {
   return `Civic@${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`;
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
     return sendError(res, 500, 'Server-side Supabase configuration is incomplete.');
   }
