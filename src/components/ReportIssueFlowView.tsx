@@ -32,6 +32,8 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
   const [locationLandmark, setLocationLandmark] = useState('');
   const [locationWard, setLocationWard] = useState('Central Ward');
   const [locationCoords, setLocationCoords] = useState('21.1458° N, 79.0882° E');
+  const [locationLat, setLocationLat] = useState<number | undefined>(21.1458);
+  const [locationLng, setLocationLng] = useState<number | undefined>(79.0882);
   const [isGpsLoading, setIsGpsLoading] = useState(false);
 
   // Form & AI Classification State
@@ -107,6 +109,8 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
       setLocationAddress(`${geo.road}, ${geo.area}`);
       setLocationWard(geo.ward);
       setLocationCoords(geo.coords);
+      setLocationLat(geo.latitude);
+      setLocationLng(geo.longitude);
       onShowToast(`GPS Locked: ±${geo.accuracyMeters}m accuracy (${geo.road})`, 'gps_fixed');
     } catch (err: any) {
       console.warn(err);
@@ -166,6 +170,8 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
         landmark: locationLandmark.trim() || undefined,
         ward: locationWard,
         coordinates: locationCoords,
+        latitude: locationLat,
+        longitude: locationLng,
         imageUrl: finalImageUrl,
         imageAlt: issueTitle,
         timestamp: 'Just now',

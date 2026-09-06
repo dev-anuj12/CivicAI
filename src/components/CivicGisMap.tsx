@@ -116,18 +116,20 @@ export const CivicGisMap: React.FC<CivicGisMapProps> = ({
     if (!mapContainerRef.current) return;
 
     if (!mapInstanceRef.current) {
-      // Default center: India / Central urban zone (or first valid coordinate)
-      const initialLat = validCoordinateReports[0]?.latitude || 21.1458;
-      const initialLng = validCoordinateReports[0]?.longitude || 79.0882;
+      // Default center: India national overview (22.5° N, 78.9° E)
+      const hasPoints = validCoordinateReports.length > 0;
+      const initialLat = hasPoints ? validCoordinateReports[0].latitude! : 22.3511;
+      const initialLng = hasPoints ? validCoordinateReports[0].longitude! : 78.6677;
+      const initialZoom = hasPoints ? 12 : 5;
 
       const map = L.map(mapContainerRef.current, {
         center: [initialLat, initialLng],
-        zoom: 12,
+        zoom: initialZoom,
         zoomControl: false,
         attributionControl: true,
       });
 
-      // CartoDB Positron / OSM clean tile layer
+      // CartoDB Voyager / OpenStreetMap clear India base map
       L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
         maxZoom: 19,
@@ -399,9 +401,13 @@ export const CivicGisMap: React.FC<CivicGisMapProps> = ({
 
   // Recenter Map Helper
   const handleRecenter = () => {
-    if (!mapInstanceRef.current || validCoordinateReports.length === 0) return;
-    const bounds = L.latLngBounds(validCoordinateReports.map((r) => [r.latitude!, r.longitude!]));
-    mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+    if (!mapInstanceRef.current) return;
+    if (validCoordinateReports.length > 0) {
+      const bounds = L.latLngBounds(validCoordinateReports.map((r) => [r.latitude!, r.longitude!]));
+      mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+    } else {
+      mapInstanceRef.current.setView([22.3511, 78.6677], 5);
+    }
   };
 
   // Reset Filters Helper
@@ -659,22 +665,17 @@ export const CivicGisMap: React.FC<CivicGisMapProps> = ({
           </div>
         )}
 
-        {/* Empty State Overlay */}
+        {/* Floating Non-Intrusive Status Banner when 0 filter matches */}
         {!isLoading && validCoordinateReports.length === 0 && (
-          <div className="absolute inset-0 z-20 bg-white/90 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center">
-            <div className="w-14 h-14 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
-              <span className="material-symbols-outlined text-[32px]">wrong_location</span>
-            </div>
-            <h3 className="text-base font-bold text-slate-800">No Incidents Found On Map</h3>
-            <p className="text-xs text-slate-500 max-w-sm mt-1">
-              No complaints with verified geographic coordinates match your currently selected filters.
-            </p>
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 bg-slate-900/90 backdrop-blur-md text-white px-4 py-2.5 rounded-2xl shadow-xl border border-slate-700/60 flex items-center gap-3 text-xs animate-in fade-in">
+            <span className="material-symbols-outlined text-[18px] text-amber-400">public</span>
+            <span>Viewing Map of India (0 complaints match current filter)</span>
             <button
               type="button"
               onClick={handleResetFilters}
-              className="mt-4 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
             >
-              Clear All Filters
+              Reset Filters
             </button>
           </div>
         )}

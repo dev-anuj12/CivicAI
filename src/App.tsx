@@ -185,6 +185,8 @@ export default function App() {
       landmark: newReportData.landmark,
       ward: newReportData.ward || 'Central Ward',
       coordinates: newReportData.coordinates || '21.1458° N, 79.0882° E',
+      latitude: newReportData.latitude || 21.1458,
+      longitude: newReportData.longitude || 79.0882,
       imageUrl: newReportData.imageUrl || '',
       imageAlt: newReportData.title || 'Reported civic issue',
       timestamp: 'Just now',
