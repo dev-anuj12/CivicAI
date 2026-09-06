@@ -6,9 +6,16 @@
 
 import crypto from 'crypto';
 
-const SUPABASE_URL = (process.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+function cleanEnv(raw, fallback = '') {
+  if (!raw) return fallback;
+  let val = String(raw).trim();
+  if (val.includes('=')) val = val.substring(val.indexOf('=') + 1).trim();
+  return val || fallback;
+}
+
+const SUPABASE_URL = cleanEnv(process.env.VITE_SUPABASE_URL).replace(/\/$/, '');
+const SUPABASE_ANON_KEY = cleanEnv(process.env.VITE_SUPABASE_ANON_KEY);
+const SUPABASE_SERVICE_ROLE_KEY = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 function sendError(res, status, message) {
   return res.status(status).json({ message });

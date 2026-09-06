@@ -15,7 +15,13 @@ export const MASTER_ADMIN_EMAIL = (
   (import.meta.env?.VITE_SUPER_ADMIN_EMAIL as string) || 'anujvishwakarm1308@gmail.com'
 ).trim();
 
-type AuthResult = { success: boolean; user?: UserProfile; error?: string };
+export type AuthResult = {
+  success: boolean;
+  user?: UserProfile;
+  error?: string;
+  requiresEmailConfirmation?: boolean;
+  message?: string;
+};
 
 interface SupabaseProfileRow {
   user_id: string;
@@ -285,42 +291,63 @@ export class AuthService {
     ward = 'Central Municipal Zone'
   ): Promise<AuthResult> {
     if (!isLiveSupabaseConfigured()) return notConfigured();
-    if (fullName.trim().length < 2) return { success: false, error: 'Please enter your full name.' };
-    if (!/^\S+@\S+\.\S+$/.test(email)) return { success: false, error: 'Please enter a valid email address.' };
-    if (password.length < 8) return { success: false, error: 'Password must be at least 8 characters long.' };
+    const cleanName = fullName.trim();
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (cleanName.length < 2) return { success: false, error: 'Please enter your full legal name.' };
+    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) return { success: false, error: 'Please enter a valid email address.' };
+    if (!password || password.length < 6) return { success: false, error: 'Password must be at least 6 characters long.' };
 
     try {
       const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
         method: 'POST',
         headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim().toLowerCase(),
+          email: cleanEmail,
           password,
-          data: { full_name: fullName.trim(), phone: phone.trim(), ward: ward.trim() },
+          data: { full_name: cleanName, phone: phone.trim(), ward: ward.trim() },
         }),
       });
-      if (!response.ok) return { success: false, error: await getResponseError(response) };
+
+      if (!response.ok) {
+        return { success: false, error: await getResponseError(response) };
+      }
 
       const data = await response.json();
-      if (!data.session) {
-        // Account may already exist or email confirmation was recently disabled.
-        // Attempt automatic sign-in with the same credentials.
-        const signInResult = await this.signIn(email.trim().toLowerCase(), password);
-        if (signInResult.success) return signInResult;
+
+      // Check if user already exists (Supabase returns empty identities array when email enumeration protection is ON)
+      if (Array.isArray(data.identities) && data.identities.length === 0) {
         return {
           success: false,
-          error: signInResult.error || 'Account created but could not sign in automatically. Please try signing in manually.',
+          error: 'An account with this email already exists. Please switch to the Sign In tab.',
         };
       }
 
-      saveSession({
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        expiresAt: Date.now() + Number(data.session.expires_in || 3600) * 1000,
-      });
-      const user = await fetchOwnProfile(data.session.access_token);
-      saveCurrentUser(user);
-      return { success: true, user };
+      // If Supabase immediately returns a session (Email confirmation is OFF in Supabase)
+      if (data.session) {
+        saveSession({
+          accessToken: data.session.access_token,
+          refreshToken: data.session.refresh_token,
+          expiresAt: Date.now() + Number(data.session.expires_in || 3600) * 1000,
+        });
+        const user = await fetchOwnProfile(data.session.access_token);
+        saveCurrentUser(user);
+        return { success: true, user };
+      }
+
+      // If Supabase has email confirmation enabled or returned user without direct session:
+      // Try to sign in directly
+      const signInResult = await this.signIn(cleanEmail, password);
+      if (signInResult.success && signInResult.user) {
+        return signInResult;
+      }
+
+      // Email confirmation is required by Supabase Auth configuration
+      return {
+        success: true,
+        requiresEmailConfirmation: true,
+        message: `Account created successfully! A confirmation link has been sent to ${cleanEmail}. Please check your email inbox to activate your account.`,
+      };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Could not create the account.' };
     }

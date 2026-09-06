@@ -148,6 +148,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -155,6 +156,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfoMessage('');
     setIsLoading(true);
 
     try {
@@ -164,6 +166,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
           onAuthSuccess(res.user);
           onShowToast(`Welcome to CivicAI, ${res.user.fullName}!`, 'verified');
           onClose();
+        } else if (res.success && res.requiresEmailConfirmation) {
+          setInfoMessage(res.message || 'Account created! Please check your email inbox to verify your account.');
+          onShowToast('Account created! Please verify your email.', 'mark_email_read');
         } else {
           setError(res.error || 'Sign up failed.');
         }
@@ -206,6 +211,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
             onClick={() => {
               setTab('signin');
               setError('');
+              setInfoMessage('');
             }}
             className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               tab === 'signin' ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
@@ -218,6 +224,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
             onClick={() => {
               setTab('signup');
               setError('');
+              setInfoMessage('');
             }}
             className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               tab === 'signup' ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
@@ -226,6 +233,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
             Sign Up (Free)
           </button>
         </div>
+
+        {infoMessage && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs rounded-2xl space-y-2 animate-in fade-in">
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined text-emerald-600 text-[20px] shrink-0">mark_email_read</span>
+              <div>
+                <p className="font-bold text-emerald-950">Verification Required</p>
+                <p className="mt-0.5 text-emerald-800 leading-relaxed">{infoMessage}</p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between">
+              <span className="text-[11px] text-emerald-700">Already confirmed?</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setTab('signin');
+                  setInfoMessage('');
+                  setError('');
+                }}
+                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] transition-colors cursor-pointer"
+              >
+                Go to Sign In →
+              </button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-3 text-xs">
           {tab === 'signup' && (
@@ -280,9 +313,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
           </div>
 
           {error && (
-            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-[16px]">error</span>
-              <span>{error}</span>
+            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-start gap-1.5">
+              <span className="material-symbols-outlined text-[16px] shrink-0 mt-0.5">error</span>
+              <span className="leading-tight">{error}</span>
             </div>
           )}
 
