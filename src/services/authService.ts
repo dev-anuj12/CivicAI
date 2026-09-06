@@ -303,9 +303,13 @@ export class AuthService {
 
       const data = await response.json();
       if (!data.session) {
+        // Account may already exist or email confirmation was recently disabled.
+        // Attempt automatic sign-in with the same credentials.
+        const signInResult = await this.signIn(email.trim().toLowerCase(), password);
+        if (signInResult.success) return signInResult;
         return {
           success: false,
-          error: 'Account created. Please verify the email sent by Supabase, then sign in.',
+          error: signInResult.error || 'Account created but could not sign in automatically. Please try signing in manually.',
         };
       }
 
