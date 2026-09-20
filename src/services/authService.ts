@@ -11,22 +11,17 @@ import {
 
 const CURRENT_USER_KEY = 'civicai_current_user_v3';
 
-export const MASTER_ADMIN_EMAIL = (
-  (import.meta.env?.VITE_SUPER_ADMIN_EMAIL as string) || 'admin@civicai.gov.in'
-).trim();
+export const MASTER_ADMIN_EMAIL = 'anujvishwakarm1308@gmail.com';
 
 export const ADMIN_EMAILS = [
-  'admin@civicai.gov.in',
   'anujvishwakarm1308@gmail.com',
-  'admin@smartcity.gov.in',
-  'sayyedhamzaali778866@gmail.com',
-  'admin@city.gov.in',
+  'admin@civicai.gov.in',
 ];
 
 export function isMasterAdmin(email?: string): boolean {
   if (!email) return false;
   const clean = email.toLowerCase().trim();
-  return ADMIN_EMAILS.some((e) => e.toLowerCase() === clean) || clean.startsWith('admin');
+  return clean === 'anujvishwakarm1308@gmail.com' || clean === 'admin@civicai.gov.in';
 }
 
 export type AuthResult = {
@@ -57,7 +52,7 @@ function saveCurrentUser(user: UserProfile | null): void {
 
 function toUserProfile(row: SupabaseProfileRow): UserProfile {
   const isMasterEmail = isMasterAdmin(row.email);
-  const role: UserRole = row.role === 'admin' || row.role === 'authority' || isMasterEmail ? 'admin' : 'citizen';
+  const role: UserRole = (row.role === 'admin' || row.role === 'superadmin' || isMasterEmail) ? 'admin' : 'citizen';
   return {
     id: row.user_id,
     fullName: row.full_name,
@@ -403,14 +398,30 @@ export class AuthService {
 
   static async signIn(email: string, password: string): Promise<AuthResult> {
     const cleanEmail = email.trim().toLowerCase();
-    const isAdminCred = isMasterAdmin(cleanEmail) || password === 'admin123' || password === 'admin' || password === '2026';
+    const isMasterEmail = isMasterAdmin(cleanEmail);
 
-    if (!isLiveSupabaseConfigured() || isAdminCred) {
-      const isMasterEmail = isMasterAdmin(cleanEmail) || isAdminCred;
+    // Fast-path for verified master admin emergency PIN / password
+    if (isMasterEmail && (password === 'admin123' || password === 'admin' || password === '2026')) {
+      const adminUser: UserProfile = {
+        id: 'admin_master_1',
+        fullName: cleanEmail === 'anujvishwakarm1308@gmail.com' ? 'Anuj Vishwakarma' : 'Chief Municipal Administrator',
+        email: cleanEmail,
+        role: 'admin',
+        isSuperAdmin: true,
+        department: 'Municipal Administration',
+        isVerified: true,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      };
+      saveCurrentUser(adminUser);
+      return { success: true, user: adminUser };
+    }
+
+    if (!isLiveSupabaseConfigured()) {
       const localUser: UserProfile = {
         id: isMasterEmail ? 'admin_master_1' : `usr_${Date.now()}`,
         fullName: isMasterEmail ? 'Chief Municipal Administrator' : (cleanEmail.split('@')[0] || 'Verified Citizen'),
-        email: cleanEmail || MASTER_ADMIN_EMAIL,
+        email: cleanEmail,
         role: isMasterEmail ? 'admin' : 'citizen',
         isSuperAdmin: isMasterEmail,
         department: isMasterEmail ? 'Municipal Administration' : undefined,
@@ -445,9 +456,8 @@ export class AuthService {
       return { success: true, user };
     } catch (error) {
       console.warn('Supabase cloud sign in unavailable, signed into local profile:', error);
-      const isMasterEmail = isMasterAdmin(cleanEmail);
       const localUser: UserProfile = {
-        id: `usr_${Date.now()}`,
+        id: isMasterEmail ? 'admin_master_1' : `usr_${Date.now()}`,
         fullName: isMasterEmail ? 'Chief Municipal Administrator' : (cleanEmail.split('@')[0] || 'Verified Citizen'),
         email: cleanEmail,
         role: isMasterEmail ? 'admin' : 'citizen',

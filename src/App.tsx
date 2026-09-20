@@ -40,12 +40,26 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastIcon, setToastIcon] = useState<string | undefined>(undefined);
 
+  const [pendingTabAfterAuth, setPendingTabAfterAuth] = useState<TabType | null>(null);
+
   const showToast = (message: string, icon = 'check_circle') => {
     setToastMessage(message);
     setToastIcon(icon);
     setTimeout(() => {
       setToastMessage((prev) => (prev === message ? null : prev));
     }, 3800);
+  };
+
+  // Central Navigation with Authentication Guard
+  const handleNavigate = (tab: TabType) => {
+    if (tab === 'report-issue-flow' && !currentUser) {
+      setPendingTabAfterAuth('report-issue-flow');
+      setIsAuthModalOpen(true);
+      showToast('Please sign in or register to submit a verified civic complaint.', 'person');
+      return;
+    }
+    setCurrentTab(tab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // 1. Restore authenticated cloud session and keep the municipal ledger current.
@@ -56,8 +70,10 @@ export default function App() {
       const user = await AuthService.restoreSession();
       if (user && isMounted) {
         setCurrentUser(user);
-        if (user.role === 'admin' || user.role === 'superadmin') {
+        if (user.role === 'admin' || user.isSuperAdmin) {
           setUserRole('admin');
+        } else {
+          setUserRole('citizen');
         }
       }
     };
@@ -263,10 +279,7 @@ export default function App() {
         {currentTab === 'citizen-portal' && (
           <CitizenPortalView
             reports={reports}
-            onNavigate={(tab) => {
-              setCurrentTab(tab);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onNavigate={handleNavigate}
             onShowToast={showToast}
             onUpvoteReport={handleUpvote}
             onOpenReportDetail={(report) => setSelectedReportDetail(report)}
@@ -276,10 +289,7 @@ export default function App() {
         {currentTab === 'report-issue-flow' && (
           <ReportIssueFlowView
             currentUser={currentUser}
-            onNavigate={(tab) => {
-              setCurrentTab(tab);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onNavigate={handleNavigate}
             onShowToast={showToast}
             onSubmitNewReport={handleNewReport}
             onOpenAuthModal={() => setIsAuthModalOpen(true)}
@@ -289,10 +299,7 @@ export default function App() {
         {currentTab === 'my-reports-tracking' && (
           <MyReportsTrackingView
             reports={reports}
-            onNavigate={(tab) => {
-              setCurrentTab(tab);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onNavigate={handleNavigate}
             onShowToast={showToast}
             onUpvoteReport={handleUpvote}
             onUpdateReportStatus={handleUpdateStatus}
@@ -315,10 +322,7 @@ export default function App() {
       <BottomNav
         currentTab={currentTab}
         userRole={userRole}
-        onSelectTab={(tab) => {
-          setCurrentTab(tab);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
+        onSelectTab={handleNavigate}
       />
 
       {/* Toast Notification Popups */}
@@ -327,10 +331,22 @@ export default function App() {
       {/* Citizen Authentication Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
+        onClose={() => {
+          setIsAuthModalOpen(false);
+          setPendingTabAfterAuth(null);
+        }}
         onAuthSuccess={(user) => {
           setCurrentUser(user);
-          if (user.role === 'admin') setUserRole('admin');
+          if (user.role === 'admin' || user.isSuperAdmin) {
+            setUserRole('admin');
+          } else {
+            setUserRole('citizen');
+          }
+          if (pendingTabAfterAuth) {
+            setCurrentTab(pendingTabAfterAuth);
+            setPendingTabAfterAuth(null);
+            showToast(`Welcome ${user.fullName || user.email}! You can now submit your report.`, 'verified');
+          }
         }}
         onShowToast={showToast}
       />
