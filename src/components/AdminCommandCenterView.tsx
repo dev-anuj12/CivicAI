@@ -503,38 +503,114 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
          ===================================================================== */}
       {activeView === 'overview' && (
         <div className="space-y-6 animate-in fade-in">
-          {/* Real Metrics Cards */}
+          {/* Live Telemetry Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-950 text-white rounded-[24px] p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border border-slate-800 shadow-sm">
+            <div className="flex items-center gap-3">
+              <span className="w-10 h-10 rounded-2xl bg-teal-500/20 text-teal-400 flex items-center justify-center border border-teal-500/30">
+                <span className="material-symbols-outlined text-[22px]">sensors</span>
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold tracking-tight text-white">Live Municipal Telemetry</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Real-time synchronization across all citizen reports stored in Supabase Cloud
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-300 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700">
+                {reports.length} Total Citizen Reports Synced
+              </span>
+            </div>
+          </div>
+
+          {/* Interactive Live Metrics Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[11px] font-bold text-slate-400">Total Reports</span>
+            <button
+              onClick={() => {
+                setActiveView('triage');
+                setFilterStatus('all');
+              }}
+              className="bg-white hover:bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-xs text-left transition-all active:scale-95 cursor-pointer"
+            >
+              <span className="text-[11px] font-bold text-slate-500">Total Reports</span>
               <div className="text-2xl font-bold text-slate-900 mt-1">{totalIssues}</div>
-              <span className="text-[10px] text-teal-700 font-semibold">100% Real Database</span>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[11px] font-bold text-indigo-500">New / Unassigned</span>
+              <span className="text-[10px] text-teal-700 font-semibold flex items-center gap-1 mt-0.5">
+                <span>View all</span>
+                <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('triage');
+                setFilterStatus('REPORTED');
+              }}
+              className="bg-white hover:bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 shadow-xs text-left transition-all active:scale-95 cursor-pointer"
+            >
+              <span className="text-[11px] font-bold text-indigo-600">New / Unassigned</span>
               <div className="text-2xl font-bold text-indigo-700 mt-1">{newIssues}</div>
-              <span className="text-[10px] text-indigo-400">Awaiting triage</span>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[11px] font-bold text-amber-500">In Progress</span>
+              <span className="text-[10px] text-indigo-500 font-semibold flex items-center gap-1 mt-0.5">
+                <span>Triage queue</span>
+                <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('triage');
+                setFilterStatus('IN PROGRESS');
+              }}
+              className="bg-white hover:bg-amber-50/50 p-4 rounded-2xl border border-amber-100 shadow-xs text-left transition-all active:scale-95 cursor-pointer"
+            >
+              <span className="text-[11px] font-bold text-amber-600">In Progress</span>
               <div className="text-2xl font-bold text-amber-600 mt-1">{inProgressIssues}</div>
-              <span className="text-[10px] text-amber-500">Crews active</span>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[11px] font-bold text-rose-500">Critical Priority</span>
+              <span className="text-[10px] text-amber-500 font-semibold flex items-center gap-1 mt-0.5">
+                <span>Crews active</span>
+                <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveView('priority')}
+              className="bg-white hover:bg-rose-50/50 p-4 rounded-2xl border border-rose-100 shadow-xs text-left transition-all active:scale-95 cursor-pointer"
+            >
+              <span className="text-[11px] font-bold text-rose-600">Critical Priority</span>
               <div className="text-2xl font-bold text-rose-700 mt-1">{criticalIssues}</div>
-              <span className="text-[10px] text-rose-400">24h SLA target</span>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[11px] font-bold text-emerald-500">Resolved & Closed</span>
+              <span className="text-[10px] text-rose-500 font-semibold flex items-center gap-1 mt-0.5">
+                <span>SLA alert</span>
+                <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('triage');
+                setFilterStatus('RESOLVED');
+              }}
+              className="bg-white hover:bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 shadow-xs text-left transition-all active:scale-95 cursor-pointer"
+            >
+              <span className="text-[11px] font-bold text-emerald-600">Resolved & Closed</span>
               <div className="text-2xl font-bold text-emerald-700 mt-1">{resolvedIssues}</div>
-              <span className="text-[10px] text-emerald-500">Verified complete</span>
-            </div>
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[10px] text-emerald-500 font-semibold flex items-center gap-1 mt-0.5">
+                <span>Audited</span>
+                <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveView('duplicates')}
+              className="bg-white hover:bg-cyan-50/50 p-4 rounded-2xl border border-cyan-100 shadow-xs text-left transition-all active:scale-95 cursor-pointer"
+            >
               <span className="text-[11px] font-bold text-cyan-600">Possible Duplicates</span>
               <div className="text-2xl font-bold text-cyan-700 mt-1">{duplicateCount}</div>
-              <span className="text-[10px] text-cyan-500">Awaiting merge</span>
-            </div>
+              <span className="text-[10px] text-cyan-500 font-semibold flex items-center gap-1 mt-0.5">
+                <span>Merge hub</span>
+                <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+              </span>
+            </button>
           </div>
 
           {/* Weekly Submitted vs Solved Analytical Dashboard (Pie / Donut Chart) */}

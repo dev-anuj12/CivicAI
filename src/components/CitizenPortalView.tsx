@@ -126,29 +126,57 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-4">
-              <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/50">
+              <button
+                type="button"
+                onClick={() => onNavigate('my-reports-tracking')}
+                className="bg-slate-800/50 hover:bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50 text-left transition-all active:scale-95 cursor-pointer"
+              >
                 <span className="text-xs text-slate-400 font-medium">Total Registered</span>
                 <div className="text-3xl font-extrabold text-white mt-1">{totalCount}</div>
-                <span className="text-[11px] text-teal-400 font-medium">Verified by AI</span>
-              </div>
+                <span className="text-[11px] text-teal-400 font-medium flex items-center gap-1">
+                  <span>Verified by AI</span>
+                  <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+                </span>
+              </button>
 
-              <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/50">
+              <button
+                type="button"
+                onClick={() => onNavigate('my-reports-tracking')}
+                className="bg-slate-800/50 hover:bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50 text-left transition-all active:scale-95 cursor-pointer"
+              >
                 <span className="text-xs text-slate-400 font-medium">In Progress</span>
                 <div className="text-3xl font-extrabold text-amber-400 mt-1">{progressCount}</div>
-                <span className="text-[11px] text-amber-300 font-medium">Field crews active</span>
-              </div>
+                <span className="text-[11px] text-amber-300 font-medium flex items-center gap-1">
+                  <span>Field crews active</span>
+                  <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+                </span>
+              </button>
 
-              <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/50">
+              <button
+                type="button"
+                onClick={() => onNavigate('my-reports-tracking')}
+                className="bg-slate-800/50 hover:bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50 text-left transition-all active:scale-95 cursor-pointer"
+              >
                 <span className="text-xs text-slate-400 font-medium">Resolved</span>
                 <div className="text-3xl font-extrabold text-emerald-400 mt-1">{resolvedCount}</div>
-                <span className="text-[11px] text-emerald-300 font-medium">100% Audited</span>
-              </div>
+                <span className="text-[11px] text-emerald-300 font-medium flex items-center gap-1">
+                  <span>100% Audited</span>
+                  <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+                </span>
+              </button>
 
-              <div className="bg-slate-800/50 p-3.5 rounded-2xl border border-slate-700/50">
+              <button
+                type="button"
+                onClick={() => onNavigate('my-reports-tracking')}
+                className="bg-slate-800/50 hover:bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50 text-left transition-all active:scale-95 cursor-pointer"
+              >
                 <span className="text-xs text-slate-400 font-medium">Awaiting Triage</span>
                 <div className="text-3xl font-extrabold text-indigo-400 mt-1">{pendingCount}</div>
-                <span className="text-[11px] text-indigo-300 font-medium">Queued for review</span>
-              </div>
+                <span className="text-[11px] text-indigo-300 font-medium flex items-center gap-1">
+                  <span>Queued for review</span>
+                  <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+                </span>
+              </button>
             </div>
           </div>
 
