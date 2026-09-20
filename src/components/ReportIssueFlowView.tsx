@@ -40,6 +40,7 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
   const [photoFilename, setPhotoFilename] = useState<string>('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanTicker, setScanTicker] = useState('Analyzing image...');
+  const [nonCivicWarning, setNonCivicWarning] = useState<string | null>(null);
 
   // Location State
   const [locationAddress, setLocationAddress] = useState('City Center Commercial Sector, MG Road');
@@ -236,6 +237,16 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
 
     try {
       const result = await detectCivicIssueFromImage(src, filename || photoFilename);
+      if (result.isCivicIssue === false) {
+        setNonCivicWarning(
+          result.nonCivicReason ||
+            'Non-civic image detected (e.g. food/momos, gaming consoles/PS5, or personal photos). Please upload an authentic photo of a civic infrastructure defect.'
+        );
+        onShowToast('Non-civic photo detected. Please upload valid civic infrastructure evidence.', 'warning');
+        return;
+      }
+
+      setNonCivicWarning(null);
       setConfidence(result.confidence);
       setCategory(result.category);
       setAiExplanation(result.explanation);
@@ -335,6 +346,11 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
   const handleSubmit = async () => {
     if (!photoSrc) {
       onShowToast('Please capture or upload a photograph of the civic issue.', 'add_a_photo');
+      return;
+    }
+
+    if (nonCivicWarning) {
+      onShowToast('Ineligible evidence: Please upload a valid civic defect photo.', 'warning');
       return;
     }
 
@@ -619,8 +635,37 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
           </div>
         )}
 
+        {/* Non-Civic Ineligible Evidence Warning Banner */}
+        {nonCivicWarning && (
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-2 animate-in fade-in">
+            <div className="flex items-center gap-2 text-rose-800 font-bold text-xs uppercase tracking-wider">
+              <span className="material-symbols-outlined text-[18px] text-rose-600">block</span>
+              <span>Ineligible Evidence - Non-Civic Image Detected</span>
+            </div>
+            <p className="text-xs text-rose-700 leading-relaxed font-medium">
+              {nonCivicWarning}
+            </p>
+            <div className="pt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoSrc(null);
+                  setPhotoFile(null);
+                  setPhotoFilename('');
+                  setNonCivicWarning(null);
+                  document.getElementById('nativePhotoInput')?.click();
+                }}
+                className="px-3.5 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+              >
+                <span className="material-symbols-outlined text-[16px]">add_a_photo</span>
+                <span>Remove & Upload Valid Civic Photo</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* AI Result & Explainable Severity Card */}
-        {confidence > 0 && !isScanning && (
+        {confidence > 0 && !isScanning && !nonCivicWarning && (
           <div className="bg-teal-50/70 border border-teal-200/80 rounded-2xl p-4 space-y-3 animate-in fade-in">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-teal-800 inline-flex items-center gap-1.5">

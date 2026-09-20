@@ -11,12 +11,34 @@ export interface AiVisionPrediction {
   suggestedDispatch: string;
   hazardAssessment: string;
   timestamp: string;
+  isCivicIssue: boolean;
+  nonCivicReason?: string;
   features?: {
     colorEntropy: number;
     edgeDensity: number;
     luminance: number;
     hazardKeywords: string[];
   };
+}
+
+export function isNonCivicEntity(text: string): { isNonCivic: boolean; reason: string } {
+  const clean = (text || '').toLowerCase();
+  const nonCivicPatterns = [
+    { match: /(momo|momos|dumpling|dimsum)/i, reason: 'Image contains food items (Momos / Dumplings). Please upload a valid public civic defect.' },
+    { match: /(ps5|playstation|xbox|nintendo|console|gamepad|joystick|gaming)/i, reason: 'Image contains gaming consoles or entertainment electronics (PS5 / Gaming Device). Please upload a public infrastructure defect.' },
+    { match: /(burger|pizza|sandwich|noodles|biryani|pasta|snack|dessert|coffee|beverage|meal|food)/i, reason: 'Image contains food or dining items. Only public municipal infrastructure issues can be reported.' },
+    { match: /(selfie|portrait|face|person smiling|clothing|fashion)/i, reason: 'Image appears to be a personal photo or selfie. Please upload a clear photo of the civic issue.' },
+    { match: /(cat|dog|pet|puppy|kitten)/i, reason: 'Image contains pets/animals. Please upload public civic infrastructure evidence.' },
+    { match: /(laptop|iphone|smartphone|television|tv|headphone|airpod)/i, reason: 'Image contains personal consumer electronics. Please upload public civic defects.' }
+  ];
+
+  for (const item of nonCivicPatterns) {
+    if (item.match.test(clean)) {
+      return { isNonCivic: true, reason: item.reason };
+    }
+  }
+
+  return { isNonCivic: false, reason: '' };
 }
 
 const GEMINI_API_KEY =
@@ -135,7 +157,27 @@ export async function detectCivicIssueFromImage(
 ): Promise<AiVisionPrediction> {
   const timestamp = new Date().toISOString();
 
-  // 1. Check if filename or user prompt contains strong category indicators
+  // 1. Check if filename or user prompt contains non-civic items (momos, ps5, selfies, etc.)
+  if (filenameOrHint) {
+    const nonCivic = isNonCivicEntity(filenameOrHint);
+    if (nonCivic.isNonCivic) {
+      return {
+        detectedIssue: 'Non-Civic Image Detected',
+        category: 'Other Civic Issues',
+        subcategory: 'Ineligible Evidence',
+        confidence: 99,
+        severity: 'LOW',
+        explanation: nonCivic.reason,
+        suggestedDescription: 'Uploaded image contains non-civic content.',
+        suggestedDispatch: 'None',
+        hazardAssessment: 'None (Ineligible Subject Matter)',
+        timestamp,
+        isCivicIssue: false,
+        nonCivicReason: nonCivic.reason,
+      };
+    }
+  }
+
   const hintCategory = filenameOrHint ? checkFilenameCategoryHints(filenameOrHint) : null;
 
   // 2. Try Custom Backend / YOLO API if configured
@@ -231,6 +273,7 @@ async function callCustomYoloApi(imageSrc: string, apiUrl: string): Promise<AiVi
     suggestedDispatch: data.dispatch || 'Municipal Field Operations Unit',
     hazardAssessment: data.hazard || 'Requires on-site inspection.',
     timestamp: new Date().toISOString(),
+    isCivicIssue: true,
   };
 }
 
@@ -242,18 +285,20 @@ async function callGeminiVisionApi(imageSrc: string, apiKey: string): Promise<Ai
   if (!base64Data) return null;
 
   const prompt = `You are CivicAI, an expert municipal AI vision diagnostic system for Smart Cities.
-Analyze this civic defect photograph and accurately detect any of these 8 civic categories:
-1. Garbage/Waste (Sanitation & Waste) - overflowing trash, solid waste, garbage pile, plastic litter, sewage dump
-2. Water Leakage & Sewage (Water & Drainage) - pipe rupture, sewage overflow, open dirty drain, waterlogging
-3. Pothole/Road Damage (Roads & Transportation) - asphalt crater, road cracks, broken pavement
-4. Broken/Damaged Streetlight (Electricity & Lighting) - broken lamp, dangling wires, dark fixture
-5. Fallen Tree (Environment & Greenery) - fallen branch, botanical obstruction
-6. Construction Debris (Construction & Debris) - demolition rubble, unbarricaded bricks/cement
-7. Damaged Public Infrastructure (Public Infrastructure) - broken bench, open manhole, damaged railing
-8. Other Civic Issues
+FIRST, determine if this image depicts a REAL civic / public infrastructure defect (such as potholes, road damage, open drain, water leakage, overflowing garbage, broken streetlight, fallen tree, construction debris, damaged public benches/signals).
+
+If the image depicts:
+- Food or dishes (e.g. momos, pizza, noodles, snacks, dining)
+- Gaming consoles or consumer electronics (e.g. PS5, PlayStation, Xbox, controller, phones, gadgets)
+- Personal selfies, human faces, pets/animals indoors
+- Memes, wallpapers, screenshots, indoor room objects, or non-civic items
+
+Then set "isCivicIssue": false and specify "nonCivicReason" (e.g. "Image contains food items (momos) / consumer electronics (PS5) and is not a public municipal infrastructure issue").
 
 Return ONLY a valid JSON object matching this schema:
 {
+  "isCivicIssue": true or false,
+  "nonCivicReason": "detailed explanation if isCivicIssue is false",
   "detectedIssue": "short specific title of defect (e.g. Overflowing Garbage Dump or Broken Asphalt Pothole)",
   "category": "exact standard category string (e.g. Sanitation & Waste or Roads & Transportation)",
   "subcategory": "specific defect type",
@@ -296,17 +341,28 @@ Return ONLY a valid JSON object matching this schema:
   const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     const parsed = JSON.parse(jsonMatch[0]);
+    const isCivic = parsed.isCivicIssue !== false;
+    const nonCivicCheck = isNonCivicEntity(
+      `${parsed.detectedIssue || ''} ${parsed.explanation || ''} ${parsed.suggestedDescription || ''}`
+    );
+    const finalIsCivic = isCivic && !nonCivicCheck.isNonCivic;
+    const finalReason = parsed.nonCivicReason || nonCivicCheck.reason;
+
     return {
-      detectedIssue: parsed.detectedIssue || 'Reported Civic Defect',
+      detectedIssue: finalIsCivic ? (parsed.detectedIssue || 'Reported Civic Defect') : 'Non-Civic Image Detected',
       category: normalizeCivicCategory(parsed.category),
       subcategory: parsed.subcategory || 'General Defect',
       confidence: Math.min(99, Math.max(75, Number(parsed.confidence) || 94)),
       severity: parsed.severity || 'HIGH',
-      explanation: parsed.explanation || 'Visual evidence analyzed by CivicAI Multimodal Engine.',
+      explanation: finalIsCivic
+        ? (parsed.explanation || 'Visual evidence analyzed by CivicAI Multimodal Engine.')
+        : (finalReason || 'Uploaded photo depicts non-civic content (food, electronics, personal photo).'),
       suggestedDescription: parsed.suggestedDescription || 'Reported via CivicAI platform.',
       suggestedDispatch: parsed.suggestedDispatch || 'Municipal Response Division',
       hazardAssessment: parsed.hazardAssessment || 'Assessed for civic priority triage.',
       timestamp: new Date().toISOString(),
+      isCivicIssue: finalIsCivic,
+      nonCivicReason: finalReason,
     };
   }
   return null;
@@ -391,6 +447,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Solid Waste Compactor & Sanitation Rapid Action Fleet',
             hazardAssessment: 'Health and hygiene hazard, vector breeding risk, and pathway blockage.',
             timestamp,
+            isCivicIssue: true,
           });
           return;
         }
@@ -409,6 +466,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Municipal Sewerage & Suction Jetting Division',
             hazardAssessment: 'Severe contamination, slip hazard, and potential waterborne disease risk.',
             timestamp,
+            isCivicIssue: true,
           });
           return;
         }
@@ -429,6 +487,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Municipal Sewerage & Hydraulic Emergency Team',
             hazardAssessment: 'High sanitary risk, road sub-base erosion, and vehicular hazard.',
             timestamp,
+            isCivicIssue: true,
           });
         }
         // 2. Garbage / Solid Waste (Heterogeneous multi-color debris & trash scatter):
@@ -446,6 +505,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Solid Waste Compactor & Sanitation Fleet',
             hazardAssessment: 'Public hygiene risk, foul odors, and obstruction of public walkways.',
             timestamp,
+            isCivicIssue: true,
           });
         }
         // 3. Fallen Tree / Foliage Obstruction:
@@ -463,6 +523,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Garden & Environmental Tree Clearance Squad',
             hazardAssessment: 'Obstruction to traffic flow and danger to overhead utility cables.',
             timestamp,
+            isCivicIssue: true,
           });
         }
         // 4. Broken Streetlight / Darkness:
@@ -480,6 +541,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Municipal Electrical Division Line Crew',
             hazardAssessment: 'Increased nocturnal accident risk and pedestrian vulnerability.',
             timestamp,
+            isCivicIssue: true,
           });
         }
         // 5. Pothole / Asphalt Cavity:
@@ -497,6 +559,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Zone Rapid Cold-Mix Asphalt Patch Unit',
             hazardAssessment: 'High probability of two-wheeler skids and suspension damage.',
             timestamp,
+            isCivicIssue: true,
           });
         }
         // 6. Construction Debris:
@@ -514,6 +577,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Building Oversight & Debris Removal Unit',
             hazardAssessment: 'Lane obstruction and vehicular tire puncture hazard.',
             timestamp,
+            isCivicIssue: true,
           });
         }
         // 7. Default Garbage / Sanitation
@@ -531,6 +595,7 @@ function analyzeImageLocally(
             suggestedDispatch: 'Solid Waste Compactor & Sanitation Fleet',
             hazardAssessment: 'Public hygiene risk and street obstruction.',
             timestamp,
+            isCivicIssue: true,
           });
         }
       } catch {
@@ -556,6 +621,7 @@ function getDefaultResult(timestamp: string, hintCategory: IncidentCategory | nu
       suggestedDispatch: 'Solid Waste Compactor Fleet',
       hazardAssessment: 'Public hygiene risk and pedestrian obstruction.',
       timestamp,
+      isCivicIssue: true,
     };
   }
 
@@ -570,5 +636,6 @@ function getDefaultResult(timestamp: string, hintCategory: IncidentCategory | nu
     suggestedDispatch: 'Civil Infrastructure Maintenance Team',
     hazardAssessment: 'Public safety and convenience concern.',
     timestamp,
+    isCivicIssue: true,
   };
 }
