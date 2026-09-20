@@ -411,8 +411,33 @@ CREATE TRIGGER on_report_status_change
   BEFORE UPDATE ON public.reports
   FOR EACH ROW EXECUTE FUNCTION public.handle_report_status_update();
 
+-- -----------------------------------------------------------------------------
+-- Enable Supabase Realtime safely without throwing ERROR 42710
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' 
+    AND schemaname = 'public' 
+    AND tablename = 'reports'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.reports;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' 
+    AND schemaname = 'public' 
+    AND tablename = 'civic_issues'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.civic_issues;
+  END IF;
+END $$;
+
 -- After creating your own Supabase Auth account, promote it once in this SQL
 -- editor. Replace the email, then remove this comment (do not put passwords here):
 -- UPDATE public.profiles
 -- SET role = 'admin', is_super_admin = true, department = 'Municipal Administration'
--- WHERE email = 'your-admin-email@example.com';
+-- WHERE email = 'anujvishwakarm1308@gmail.com';
+
