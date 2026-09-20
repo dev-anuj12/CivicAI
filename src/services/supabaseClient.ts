@@ -245,10 +245,11 @@ function defaultAuditTrail(row: any) {
   ];
 }
 
-async function fetchCloudReport(reportId: string, accessToken: string): Promise<CivicReport> {
+async function fetchCloudReport(reportId: string, accessToken?: string): Promise<CivicReport> {
+  const headers = accessToken ? authHeaders(accessToken) : publicHeaders();
   const response = await fetch(
     `${SUPABASE_URL}/rest/v1/reports?select=*&report_id=eq.${encodeURIComponent(reportId)}&limit=1`,
-    { headers: authHeaders(accessToken) }
+    { headers }
   );
   if (!response.ok) throw toErrorMessage('Could not load the report', await getResponseError(response));
   const rows = await response.json();
@@ -256,10 +257,13 @@ async function fetchCloudReport(reportId: string, accessToken: string): Promise<
   return mapSupabaseRowToReport(rows[0]);
 }
 
-async function patchCloudReport(reportId: string, patch: Record<string, unknown>, accessToken: string): Promise<CivicReport> {
+async function patchCloudReport(reportId: string, patch: Record<string, unknown>, accessToken?: string): Promise<CivicReport> {
+  const headers = accessToken
+    ? authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' })
+    : publicHeaders({ 'Content-Type': 'application/json', Prefer: 'return=representation' });
   const response = await fetch(`${SUPABASE_URL}/rest/v1/reports?report_id=eq.${encodeURIComponent(reportId)}`, {
     method: 'PATCH',
-    headers: authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
+    headers,
     body: JSON.stringify(patch),
   });
   if (!response.ok) throw toErrorMessage('Could not save the report update', await getResponseError(response));
@@ -550,13 +554,11 @@ export async function updateReportStatus(
   if (isLiveSupabaseConfigured()) {
     try {
       const accessToken = await getValidAccessToken();
-      if (accessToken) {
-        await patchCloudReport(
-          reportId,
-          { status: newStatus, audit_trail: newAudit, resolved_at: newStatus === 'RESOLVED' ? new Date().toISOString() : null },
-          accessToken
-        );
-      }
+      await patchCloudReport(
+        reportId,
+        { status: newStatus, audit_trail: newAudit, resolved_at: newStatus === 'RESOLVED' ? new Date().toISOString() : null },
+        accessToken || undefined
+      );
     } catch (e) {
       console.warn('Cloud status update failed, updated locally:', e);
     }
@@ -617,9 +619,7 @@ export async function updateReportCrew(reportId: string, crew: string, directive
   if (isLiveSupabaseConfigured()) {
     try {
       const accessToken = await getValidAccessToken();
-      if (accessToken) {
-        await patchCloudReport(reportId, { assigned_crew: crew, status: 'ASSIGNED', audit_trail: newAudit }, accessToken);
-      }
+      await patchCloudReport(reportId, { assigned_crew: crew, status: 'ASSIGNED', audit_trail: newAudit }, accessToken || undefined);
     } catch (e) {
       console.warn('Cloud dispatch update error:', e);
     }
@@ -646,9 +646,7 @@ export async function addReportComment(
   if (isLiveSupabaseConfigured()) {
     try {
       const accessToken = await getValidAccessToken();
-      if (accessToken) {
-        await patchCloudReport(reportId, { comments: updated.comments }, accessToken);
-      }
+      await patchCloudReport(reportId, { comments: updated.comments }, accessToken || undefined);
     } catch (e) {
       console.warn('Cloud comment sync fallback:', e);
     }
@@ -668,9 +666,7 @@ export async function toggleReportUpvote(reportId: string): Promise<{ report: Ci
   if (isLiveSupabaseConfigured()) {
     try {
       const accessToken = await getValidAccessToken();
-      if (accessToken) {
-        await patchCloudReport(reportId, { upvotes: updated.upvotes }, accessToken);
-      }
+      await patchCloudReport(reportId, { upvotes: updated.upvotes }, accessToken || undefined);
     } catch (e) {
       console.warn('Cloud upvote patch fallback:', e);
     }
@@ -681,19 +677,93 @@ export async function toggleReportUpvote(reportId: string): Promise<{ report: Ci
 
 // -----------------------------------------------------------------------------
 // 4. SMART CIVIC ISSUE CONSOLIDATION
+function mapSupabaseRowToCivicIssue(row: any): CivicIssue {
+  return {
+    id: row.issue_id || row.id,
+    title: row.title || 'Civic Infrastructure Defect',
+    category: row.category || 'Roads & Transportation',
+    subcategory: row.subcategory || undefined,
+    department: row.department || 'Municipal Public Works',
+    location: row.location || 'Municipal Sector',
+    ward: row.ward || 'Central Ward',
+    latitude: Number(row.latitude) || 21.1458,
+    longitude: Number(row.longitude) || 79.0882,
+    coordinates: row.coordinates || `${Number(row.latitude || 21.1458).toFixed(4)}° N, ${Number(row.longitude || 79.0882).toFixed(4)}° E`,
+    status: normalizeStatus(row.status),
+    severity: normalizeSeverity(row.severity),
+    priority: (row.priority || 'MEDIUM') as PriorityLevel,
+    priorityScore: Number(row.priority_score || 50),
+    priorityReasons: Array.isArray(row.priority_reasons) ? row.priority_reasons : [],
+    severityReasons: Array.isArray(row.severity_reasons) ? row.severity_reasons : [],
+    reportsCount: Number(row.reports_count || 1),
+    linkedReportIds: Array.isArray(row.linked_report_ids) ? row.linked_report_ids : [],
+    primaryImageUrl: row.primary_image_url || '',
+    assignedCrew: row.assigned_crew || undefined,
+    verificationsCount: Number(row.verifications_count || 0),
+    confirmedStillPresentCount: Number(row.still_present_count || 0),
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+    resolvedAt: row.resolved_at || undefined,
+  };
+}
+
+function serializeCivicIssue(issue: CivicIssue) {
+  return {
+    issue_id: issue.id,
+    title: issue.title,
+    category: issue.category,
+    subcategory: issue.subcategory || null,
+    department: issue.department,
+    location: issue.location,
+    ward: issue.ward,
+    latitude: issue.latitude,
+    longitude: issue.longitude,
+    coordinates: issue.coordinates || `${issue.latitude}° N, ${issue.longitude}° E`,
+    status: issue.status,
+    severity: issue.severity,
+    priority: issue.priority,
+    priority_score: issue.priorityScore,
+    priority_reasons: issue.priorityReasons || [],
+    severity_reasons: issue.severityReasons || [],
+    reports_count: issue.reportsCount,
+    linked_report_ids: issue.linkedReportIds || [],
+    primary_image_url: issue.primaryImageUrl,
+    assigned_crew: issue.assignedCrew || null,
+    verifications_count: issue.verificationsCount,
+    still_present_count: issue.confirmedStillPresentCount,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// 4. SMART CIVIC ISSUE CONSOLIDATION
 // -----------------------------------------------------------------------------
 export async function fetchCivicIssues(): Promise<CivicIssue[]> {
-  const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
-  if (issues.length === 0) {
-    // Generate initial consolidated issues from reports if empty
-    const reports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
-    if (reports.length > 0) {
-      const generated = consolidateInitialIssuesFromReports(reports);
-      PersistentStore.set(STORAGE_KEYS.ISSUES, generated);
-      return generated;
+  if (isLiveSupabaseConfigured()) {
+    try {
+      const accessToken = await getValidAccessToken();
+      const headers = accessToken ? authHeaders(accessToken) : publicHeaders();
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/civic_issues?select=*&order=created_at.desc`, { headers });
+      if (response.ok) {
+        const rows = await response.json();
+        if (Array.isArray(rows) && rows.length > 0) {
+          const issues = rows.map(mapSupabaseRowToCivicIssue);
+          PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+          return issues;
+        }
+      }
+    } catch (e) {
+      console.warn('Supabase fetchCivicIssues fallback:', e);
     }
   }
-  return issues;
+
+  const reports = await fetchAllReports();
+  if (reports.length > 0) {
+    const generated = consolidateInitialIssuesFromReports(reports);
+    PersistentStore.set(STORAGE_KEYS.ISSUES, generated);
+    return generated;
+  }
+
+  return PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
 }
 
 function consolidateInitialIssuesFromReports(reports: CivicReport[]): CivicIssue[] {
@@ -806,6 +876,16 @@ export async function consolidateReportIntoCivicIssue(
       issues[existingIndex] = existing;
       PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
       updateLocalReport(report);
+
+      if (isLiveSupabaseConfigured()) {
+        try {
+          await fetch(`${SUPABASE_URL}/rest/v1/civic_issues?issue_id=eq.${encodeURIComponent(existing.id)}`, {
+            method: 'PATCH',
+            headers: publicHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify(serializeCivicIssue(existing)),
+          });
+        } catch {}
+      }
       return existing;
     }
   }
@@ -861,6 +941,17 @@ export async function consolidateReportIntoCivicIssue(
   issues.unshift(newIssue);
   PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
   updateLocalReport(report);
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/civic_issues`, {
+        method: 'POST',
+        headers: publicHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(serializeCivicIssue(newIssue)),
+      });
+    } catch {}
+  }
+
   return newIssue;
 }
 
@@ -874,6 +965,20 @@ export async function syncCivicIssueStatus(issueId: string, status: IncidentStat
       issues[index].resolvedAt = new Date().toISOString();
     }
     PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+
+    if (isLiveSupabaseConfigured()) {
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/civic_issues?issue_id=eq.${encodeURIComponent(issueId)}`, {
+          method: 'PATCH',
+          headers: publicHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            status,
+            updated_at: new Date().toISOString(),
+            resolved_at: status === 'RESOLVED' ? new Date().toISOString() : null,
+          }),
+        });
+      } catch {}
+    }
   }
 }
 
@@ -881,6 +986,33 @@ export async function syncCivicIssueStatus(issueId: string, status: IncidentStat
 // 3. DUPLICATE MATCHES STORAGE & REVIEW
 // -----------------------------------------------------------------------------
 export async function fetchDuplicateMatches(): Promise<DuplicateMatch[]> {
+  if (isLiveSupabaseConfigured()) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/duplicate_matches?select=*&order=matched_at.desc`, {
+        headers: publicHeaders(),
+      });
+      if (response.ok) {
+        const rows = await response.json();
+        return rows.map((r: any) => ({
+          id: r.id,
+          sourceReportId: r.source_report_id,
+          targetIssueId: r.target_issue_id,
+          targetReportId: r.target_report_id,
+          similarityScore: r.similarity_score,
+          signals: {
+            geoDistanceMeters: Number(r.geo_distance_meters || 0),
+            visualSimilarity: Number(r.visual_similarity || 0),
+            textSimilarity: Number(r.text_similarity || 0),
+            categoryMatch: Boolean(r.category_match),
+            temporalHours: Number(r.temporal_hours || 0),
+            ...(r.signals || {}),
+          },
+          status: r.status,
+          matchedAt: r.matched_at,
+        }));
+      }
+    } catch {}
+  }
   return PersistentStore.get<DuplicateMatch[]>(STORAGE_KEYS.DUPLICATES, []);
 }
 
@@ -890,6 +1022,27 @@ export async function saveDuplicateMatch(match: DuplicateMatch): Promise<void> {
   if (!exists) {
     matches.unshift(match);
     PersistentStore.set(STORAGE_KEYS.DUPLICATES, matches);
+  }
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/duplicate_matches`, {
+        method: 'POST',
+        headers: publicHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          source_report_id: match.sourceReportId,
+          target_issue_id: match.targetIssueId,
+          target_report_id: match.targetReportId || null,
+          similarity_score: match.similarityScore,
+          geo_distance_meters: match.signals?.geoDistanceMeters || null,
+          visual_similarity: match.signals?.visualSimilarity || null,
+          text_similarity: match.signals?.textSimilarity || null,
+          category_match: match.signals?.categoryMatch ?? true,
+          signals: match.signals || {},
+          status: match.status || 'possible_duplicate',
+        }),
+      });
+    } catch {}
   }
 }
 
@@ -905,6 +1058,16 @@ export async function resolveDuplicateMatchAction(
   match.status = action;
   matches[matchIndex] = match;
   PersistentStore.set(STORAGE_KEYS.DUPLICATES, matches);
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/duplicate_matches?id=eq.${encodeURIComponent(matchId)}`, {
+        method: 'PATCH',
+        headers: publicHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ status: action }),
+      });
+    } catch {}
+  }
 
   if (action === 'linked_to_issue') {
     // Merge source report into target issue
@@ -941,6 +1104,21 @@ export async function addCommunityVerification(
   verifications.unshift(newVerif);
   PersistentStore.set(STORAGE_KEYS.VERIFICATIONS, verifications);
 
+  if (isLiveSupabaseConfigured()) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/community_verifications`, {
+        method: 'POST',
+        headers: publicHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          issue_id: issueId,
+          report_id: reportId || null,
+          user_name: userName,
+          verification_type: type,
+        }),
+      });
+    } catch {}
+  }
+
   // Increment counter on CivicIssue
   const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
   const issueIndex = issues.findIndex((i) => i.id === issueId);
@@ -973,25 +1151,26 @@ export async function submitResolutionEvidence(evidence: {
   evidenceStore.unshift(newEvidence);
   PersistentStore.set(STORAGE_KEYS.RESOLUTION_EVIDENCE, evidenceStore);
 
-  // Attach evidence to report and issue
-  if (evidence.reportId) {
-    const reports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
-    const rIdx = reports.findIndex((r) => r.id === evidence.reportId);
-    if (rIdx !== -1) {
-      reports[rIdx].resolutionEvidence = newEvidence;
-      reports[rIdx].status = 'RESOLVED';
-      PersistentStore.set(STORAGE_KEYS.REPORTS, reports);
-    }
+  if (isLiveSupabaseConfigured()) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/resolution_evidence`, {
+        method: 'POST',
+        headers: publicHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          report_id: evidence.reportId || null,
+          issue_id: evidence.issueId || null,
+          before_image_url: evidence.beforeImageUrl,
+          after_image_url: evidence.afterImageUrl,
+          resolved_by: evidence.resolvedBy,
+          resolution_notes: evidence.resolutionNotes,
+        }),
+      });
+    } catch {}
   }
 
-  if (evidence.issueId) {
-    const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
-    const iIdx = issues.findIndex((i) => i.id === evidence.issueId);
-    if (iIdx !== -1) {
-      issues[iIdx].resolutionEvidence = newEvidence;
-      issues[iIdx].status = 'RESOLVED';
-      PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
-    }
+  // Attach evidence to report and issue
+  if (evidence.reportId) {
+    await updateReportStatus(evidence.reportId, 'RESOLVED', evidence.resolvedBy, `Resolved: ${evidence.resolutionNotes}`);
   }
 
   return newEvidence;
@@ -1016,6 +1195,28 @@ export async function confirmResolutionByCitizen(
 // 10. REPORT INTEGRITY ENGINE STORAGE
 // -----------------------------------------------------------------------------
 export async function fetchReportIntegrityList(): Promise<ReportIntegrityRecord[]> {
+  if (isLiveSupabaseConfigured()) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/report_integrity?select=*&order=analyzed_at.desc`, {
+        headers: publicHeaders(),
+      });
+      if (response.ok) {
+        const rows = await response.json();
+        return rows.map((r: any) => ({
+          reportId: r.report_id,
+          status: r.status,
+          flags: r.flags || [],
+          confidenceScore: Number(r.confidence_score || 95),
+          submissionVelocity: Number(r.submission_velocity || 1),
+          imageDuplicateRisk: Number(r.image_duplicate_risk || 0),
+          geoRadiusDensity: Number(r.geo_radius_density || 1),
+          adminReviewed: Boolean(r.admin_reviewed),
+          adminActionNote: r.admin_action_note || undefined,
+          analyzedAt: r.analyzed_at || new Date().toISOString(),
+        }));
+      }
+    } catch {}
+  }
   return PersistentStore.get<ReportIntegrityRecord[]>(STORAGE_KEYS.INTEGRITY, []);
 }
 
@@ -1025,6 +1226,26 @@ export async function saveReportIntegrityRecord(record: ReportIntegrityRecord): 
   if (idx === -1) list.unshift(record);
   else list[idx] = record;
   PersistentStore.set(STORAGE_KEYS.INTEGRITY, list);
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/report_integrity`, {
+        method: 'POST',
+        headers: publicHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          report_id: record.reportId,
+          status: record.status,
+          flags: record.flags || [],
+          confidence_score: record.confidenceScore,
+          submission_velocity: record.submissionVelocity || 1,
+          image_duplicate_risk: record.imageDuplicateRisk || 0,
+          geo_radius_density: record.geoRadiusDensity || 1,
+          admin_reviewed: record.adminReviewed || false,
+          admin_action_note: record.adminActionNote || null,
+        }),
+      });
+    } catch {}
+  }
 }
 
 // -----------------------------------------------------------------------------

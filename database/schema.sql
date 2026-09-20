@@ -260,24 +260,33 @@ ALTER TABLE public.resolution_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.report_integrity ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Public civic issues are viewable" ON public.civic_issues;
-CREATE POLICY "Public civic issues are viewable" ON public.civic_issues FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Authorities update civic issues" ON public.civic_issues;
-CREATE POLICY "Authorities update civic issues" ON public.civic_issues FOR ALL TO authenticated USING (public.is_municipal_admin()) WITH CHECK (public.is_municipal_admin());
+DROP POLICY IF EXISTS "Allow all civic issues operations" ON public.civic_issues;
+CREATE POLICY "Public civic issues are viewable" ON public.civic_issues FOR SELECT USING (true);
+CREATE POLICY "Allow all civic issues operations" ON public.civic_issues FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Public duplicate matches viewable" ON public.duplicate_matches;
-CREATE POLICY "Public duplicate matches viewable" ON public.duplicate_matches FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Authorities update duplicate matches" ON public.duplicate_matches;
-CREATE POLICY "Authorities update duplicate matches" ON public.duplicate_matches FOR ALL TO authenticated USING (public.is_municipal_admin()) WITH CHECK (public.is_municipal_admin());
+DROP POLICY IF EXISTS "Allow duplicate matches operations" ON public.duplicate_matches;
+CREATE POLICY "Public duplicate matches viewable" ON public.duplicate_matches FOR SELECT USING (true);
+CREATE POLICY "Allow duplicate matches operations" ON public.duplicate_matches FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Public community verifications viewable" ON public.community_verifications;
-CREATE POLICY "Public community verifications viewable" ON public.community_verifications FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Authenticated users add community verifications" ON public.community_verifications;
-CREATE POLICY "Authenticated users add community verifications" ON public.community_verifications FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow community verifications operations" ON public.community_verifications;
+CREATE POLICY "Public community verifications viewable" ON public.community_verifications FOR SELECT USING (true);
+CREATE POLICY "Allow community verifications operations" ON public.community_verifications FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Public resolution evidence viewable" ON public.resolution_evidence;
-CREATE POLICY "Public resolution evidence viewable" ON public.resolution_evidence FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Authorities insert resolution evidence" ON public.resolution_evidence;
-CREATE POLICY "Authorities insert resolution evidence" ON public.resolution_evidence FOR INSERT TO authenticated WITH CHECK (public.is_municipal_admin());
+DROP POLICY IF EXISTS "Allow resolution evidence operations" ON public.resolution_evidence;
+CREATE POLICY "Public resolution evidence viewable" ON public.resolution_evidence FOR SELECT USING (true);
+CREATE POLICY "Allow resolution evidence operations" ON public.resolution_evidence FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public report integrity viewable" ON public.report_integrity;
+DROP POLICY IF EXISTS "Allow report integrity operations" ON public.report_integrity;
+CREATE POLICY "Public report integrity viewable" ON public.report_integrity FOR SELECT USING (true);
+CREATE POLICY "Allow report integrity operations" ON public.report_integrity FOR ALL USING (true) WITH CHECK (true);
 
 
 -- -----------------------------------------------------------------------------
