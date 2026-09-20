@@ -14,6 +14,7 @@ import {
   createReport,
   fetchAllReports,
   fetchNotifications,
+  getCachedReports,
   markAllNotificationsRead,
   toggleReportUpvote,
   updateReportCrew,
@@ -25,7 +26,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('citizen-portal');
   const [userRole, setUserRole] = useState<UserRole>('citizen');
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [reports, setReports] = useState<CivicReport[]>([]);
+  const [reports, setReports] = useState<CivicReport[]>(() => getCachedReports());
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotifs, setUnreadNotifs] = useState(false);
 

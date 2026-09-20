@@ -61,6 +61,10 @@ class PersistentStore {
   }
 }
 
+export function getCachedReports(): CivicReport[] {
+  return PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+}
+
 function toErrorMessage(prefix: string, details: string): Error {
   return new Error(`${prefix}: ${details}`);
 }
@@ -102,12 +106,6 @@ function normalizeSeverity(severity: string | null | undefined): IncidentSeverit
 
 function serializeReport(report: CivicReport) {
   const validUserId = isUuid(report.userId) ? report.userId : null;
-  const metadata = {
-    ...(report.categoryMetadata || {}),
-    reporterName: report.reporterName || 'Verified Citizen',
-    reporterContact: report.reporterContact || undefined,
-    reporterUserId: report.userId || undefined,
-  };
   return {
     report_id: report.id,
     user_id: validUserId,
@@ -123,18 +121,10 @@ function serializeReport(report: CivicReport) {
     severity: report.priority,
     status: report.status,
     image_url: report.imageUrl,
-    ai_detected_issue: report.title,
-    ai_category: report.category,
-    ai_confidence: report.confidenceScore,
-    ai_severity: report.priority,
-    ai_explanation: report.hazardAssessment,
-    assigned_authority: report.department,
     assigned_crew: report.assignedCrew || null,
-    category_metadata: metadata,
     audit_trail: report.auditTrail || [],
     comments: report.comments || [],
     upvotes: report.upvotes || 0,
-    issue_id: report.issueId || null,
   };
 }
 
@@ -431,11 +421,16 @@ export async function createReport(report: CivicReport): Promise<CivicReport> {
         ? authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' })
         : publicHeaders({ 'Content-Type': 'application/json', Prefer: 'return=representation' });
 
-      // If user has a valid cloud JWT session, attach their Supabase auth UUID
-      if (accessToken && (!report.userId || !isUuid(report.userId))) {
-        const uid = getUserIdFromJwt(accessToken);
-        if (uid && isUuid(uid)) {
-          report.userId = uid;
+      // Attach valid Supabase UUID for user attribution
+      if (!report.userId || !isUuid(report.userId)) {
+        const currentUser = AuthService.getCurrentUser();
+        if (currentUser?.id && isUuid(currentUser.id)) {
+          report.userId = currentUser.id;
+        } else if (accessToken) {
+          const uid = getUserIdFromJwt(accessToken);
+          if (uid && isUuid(uid)) {
+            report.userId = uid;
+          }
         }
       }
 
