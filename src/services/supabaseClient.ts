@@ -102,6 +102,12 @@ function normalizeSeverity(severity: string | null | undefined): IncidentSeverit
 
 function serializeReport(report: CivicReport) {
   const validUserId = isUuid(report.userId) ? report.userId : null;
+  const metadata = {
+    ...(report.categoryMetadata || {}),
+    reporterName: report.reporterName || 'Verified Citizen',
+    reporterContact: report.reporterContact || undefined,
+    reporterUserId: report.userId || undefined,
+  };
   return {
     report_id: report.id,
     user_id: validUserId,
@@ -124,7 +130,7 @@ function serializeReport(report: CivicReport) {
     ai_explanation: report.hazardAssessment,
     assigned_authority: report.department,
     assigned_crew: report.assignedCrew || null,
-    category_metadata: report.categoryMetadata || {},
+    category_metadata: metadata,
     audit_trail: report.auditTrail || [],
     comments: report.comments || [],
     upvotes: report.upvotes || 0,
@@ -194,11 +200,13 @@ function mapSupabaseRowToReport(row: any): CivicReport {
   const resolvedCoords = resolveIndianCoordinates(row) || { lat: 21.1458, lng: 79.0882 };
   const lat = resolvedCoords.lat;
   const lng = resolvedCoords.lng;
+  const metadata = row.category_metadata || {};
 
   return {
     id: row.report_id || row.id,
-    userId: row.user_id || undefined,
-    reporterName: row.reporter_name || 'Verified Citizen',
+    userId: row.user_id || metadata.reporterUserId || undefined,
+    reporterName: row.reporter_name || metadata.reporterName || 'Verified Citizen',
+    reporterContact: row.reporter_contact || metadata.reporterContact || undefined,
     title: row.title || 'Civic Issue',
     category: row.category || 'Other Civic Issues',
     subcategory: row.subcategory || undefined,
@@ -223,7 +231,7 @@ function mapSupabaseRowToReport(row: any): CivicReport {
     hazardAssessment: row.ai_explanation || 'Assessed via CivicAI Vision Engine.',
     recommendedDispatch: 'Standard municipal inspection unit.',
     isPrivate: true,
-    categoryMetadata: row.category_metadata || {},
+    categoryMetadata: metadata,
     auditTrail: Array.isArray(row.audit_trail) && row.audit_trail.length ? row.audit_trail : defaultAuditTrail(row),
     comments: Array.isArray(row.comments) ? row.comments : [],
     createdAt: row.created_at || new Date().toISOString(),

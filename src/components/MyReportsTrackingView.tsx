@@ -30,12 +30,20 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
 
   // My reports vs All reports
   const userReports = currentUser
-    ? reports.filter(
-        (r) =>
-          (r.userId && r.userId === currentUser.id) ||
-          (currentUser.email && r.reporterContact === currentUser.email) ||
-          (currentUser.fullName && r.reporterName === currentUser.fullName)
-      )
+    ? reports.filter((r) => {
+        const idMatch = Boolean(r.userId && (r.userId === currentUser.id || r.userId === currentUser.email));
+        const emailMatch = Boolean(
+          currentUser.email &&
+            r.reporterContact &&
+            r.reporterContact.toLowerCase() === currentUser.email.toLowerCase()
+        );
+        const nameMatch = Boolean(
+          currentUser.fullName &&
+            r.reporterName &&
+            r.reporterName.toLowerCase() === currentUser.fullName.toLowerCase()
+        );
+        return idMatch || emailMatch || nameMatch;
+      })
     : [];
 
   const scopedReports = scopeFilter === 'my' && userReports.length > 0 ? userReports : reports;
