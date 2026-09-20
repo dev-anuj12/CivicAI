@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { CivicReport, TabType } from '../types';
-import { CIVIC_CATEGORIES, MAP_RADAR_URL } from '../data/mockData';
+import { CIVIC_CATEGORIES } from '../data/mockData';
+import { addCommunityVerification } from '../services/supabaseClient';
+import { useTranslation } from '../i18n/translations';
 
 interface CitizenPortalViewProps {
   reports: CivicReport[];
@@ -17,6 +19,7 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
   onUpvoteReport,
   onOpenReportDetail,
 }) => {
+  const { t } = useTranslation();
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeStatusFilter, setActiveStatusFilter] = useState<'all' | 'pending' | 'progress' | 'resolved'>('all');
   const [selectedWard, setSelectedWard] = useState('Central Municipal Zone');
@@ -24,12 +27,8 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
   // Filter nearby reports
   const filteredReports = reports.filter((r) => {
     if (activeCategory) {
-      if (r.category !== activeCategory) {
-        // Also check legacy
-        const catObj = CIVIC_CATEGORIES.find((c) => c.id === activeCategory);
-        if (!catObj || !r.category.includes(activeCategory.split(' ')[0])) {
-          return false;
-        }
+      if (r.category !== activeCategory && !r.category.includes(activeCategory.split(' ')[0])) {
+        return false;
       }
     }
 
@@ -40,11 +39,21 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
     return true;
   });
 
-  // 100% REAL dynamic statistics (ZERO fake hardcoded numbers!)
+  // 100% REAL dynamic statistics
   const totalCount = reports.length;
   const pendingCount = reports.filter((r) => r.status === 'REPORTED').length;
   const progressCount = reports.filter((r) => r.status === 'IN PROGRESS' || r.status === 'ASSIGNED' || r.status === 'UNDER REVIEW').length;
   const resolvedCount = reports.filter((r) => r.status === 'RESOLVED').length;
+
+  // 11. Community Verification Handler
+  const handleCommunityConfirm = async (report: CivicReport, e: React.MouseEvent) => {
+    e.stopPropagation();
+    onUpvoteReport(report.id);
+    if (report.issueId) {
+      await addCommunityVerification(report.issueId, 'confirm', 'Verified Citizen', report.id);
+    }
+    onShowToast(t('verify.thankYou'), 'verified');
+  };
 
   return (
     <div className="flex flex-col w-full gap-6 pb-24 animate-in fade-in duration-200">
@@ -58,10 +67,10 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
             <div className="flex items-center justify-between">
               <span className="px-3 py-1 bg-teal-50 text-teal-800 rounded-full text-xs font-bold uppercase tracking-wider inline-flex items-center gap-1.5 border border-teal-200/60">
                 <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
-                <span>AI Vision Triage • Active</span>
+                <span>AI Vision Triage & Intelligence</span>
               </span>
               <span className="font-label-code text-xs text-slate-500 font-semibold bg-slate-100 px-2.5 py-1 rounded-full">
-                One Platform. Every Civic Issue.
+                {t('app.tagline')}
               </span>
             </div>
 
@@ -69,7 +78,7 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
               Report. Resolve. Improve Your City.
             </h1>
             <p className="text-slate-600 font-medium text-sm sm:text-base mt-2 max-w-xl leading-relaxed">
-              Report roads, water, electricity, sanitation, infrastructure, and other civic problems. CivicAI uses AI vision to identify issues and dispatch municipal work orders automatically.
+              Report roads, water, electricity, sanitation, infrastructure, and other civic problems. CivicAI uses AI vision to identify issues, prevent duplicates, and dispatch municipal work orders automatically.
             </p>
           </div>
 
@@ -83,7 +92,7 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
                 <span className="material-symbols-outlined text-[22px] group-hover/btn:rotate-6 transition-transform">
                   photo_camera
                 </span>
-                <span>Report Civic Issue</span>
+                <span>{t('nav.reportIssue')}</span>
               </div>
               <span className="material-symbols-outlined text-[20px] group-hover/btn:translate-x-1 transition-transform">
                 arrow_forward
@@ -96,7 +105,7 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
               onClick={() => onNavigate('my-reports-tracking')}
             >
               <span className="material-symbols-outlined text-[20px]">search</span>
-              <span>Track Reports</span>
+              <span>{t('nav.myReports')}</span>
             </button>
           </div>
         </div>
@@ -150,12 +159,12 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
         </div>
       </div>
 
-      {/* Section: 9 Civic Domains Quick Filter */}
+      {/* Section: 8 Civic Target Domains Filter */}
       <div className="bg-white rounded-[28px] p-6 border border-slate-200 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
           <div>
             <h2 className="text-lg font-bold text-slate-900">What Can You Report?</h2>
-            <p className="text-xs text-slate-500">9 unified civic infrastructure categories supported</p>
+            <p className="text-xs text-slate-500">8 target civic infrastructure categories supported</p>
           </div>
           {activeCategory && (
             <button
@@ -170,6 +179,8 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {CIVIC_CATEGORIES.map((cat) => {
             const isSelected = activeCategory === cat.id;
+            const count = reports.filter((r) => r.category === cat.id || r.category.includes(cat.name.split(' ')[0])).length;
+
             return (
               <button
                 key={cat.id}
@@ -188,7 +199,7 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
                     {cat.icon}
                   </span>
                   <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md">
-                    {reports.filter((r) => r.category === cat.id).length}
+                    {count}
                   </span>
                 </div>
                 <div className="mt-2">
@@ -322,28 +333,28 @@ export const CitizenPortalView: React.FC<CitizenPortalViewProps> = ({
                       {report.title}
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">{report.description}</p>
-                    <div className="flex items-center gap-1 text-[11px] text-slate-400 mt-2 font-medium">
-                      <span className="material-symbols-outlined text-[14px]">pin_drop</span>
-                      <span className="truncate">{report.location}</span>
+                    <div className="flex items-center gap-1 text-[11px] text-slate-600 mt-2 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-teal-700 shrink-0">pin_drop</span>
+                      <span className="truncate font-semibold text-slate-800">{report.location}</span>
+                      {report.landmark && <span className="text-slate-500 truncate">• {report.landmark}</span>}
                     </div>
                   </div>
                 </div>
 
                 <div className="px-4 pb-4 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  {/* Community Verification Button */}
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onUpvoteReport(report.id);
-                    }}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full font-bold transition-all cursor-pointer ${
+                    onClick={(e) => handleCommunityConfirm(report, e)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-bold transition-all cursor-pointer ${
                       report.hasUpvoted
                         ? 'bg-teal-50 text-teal-800 border border-teal-200'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
+                    title="Confirm this issue is active"
                   >
-                    <span className="material-symbols-outlined text-[15px]">thumb_up</span>
-                    <span>{report.upvotes || 0}</span>
+                    <span className="material-symbols-outlined text-[15px]">how_to_vote</span>
+                    <span>Confirm ({report.upvotes || 0})</span>
                   </button>
 
                   <span className="text-[11px] font-semibold text-slate-400">{report.timestamp}</span>

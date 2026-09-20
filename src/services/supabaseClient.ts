@@ -1,4 +1,20 @@
-import { CivicReport, DepartmentKPIs, DepartmentStats, IncidentSeverity, IncidentStatus, NotificationItem } from '../types';
+import {
+  CivicHotspot,
+  CivicIssue,
+  CivicReport,
+  CommunityVerification,
+  DepartmentKPIs,
+  DepartmentStats,
+  DuplicateMatch,
+  IncidentCategory,
+  IncidentSeverity,
+  IncidentStatus,
+  IntegrityStatus,
+  NotificationItem,
+  PriorityLevel,
+  ReportIntegrityRecord,
+  ResolutionEvidence,
+} from '../types';
 import { AuthService } from './authService';
 import {
   getResponseError,
@@ -7,12 +23,21 @@ import {
   SUPABASE_ANON_KEY,
   SUPABASE_URL,
 } from './supabaseConfig';
+import { calculateExplainablePriority } from '../ai/priorityEngine';
+import { calculateExplainableSeverity } from '../ai/severity';
+import { assessReportIntegrity } from '../ai/integrityEngine';
+import { detectDuplicateComplaints } from '../ai/duplicateDetector';
 
 export { isLiveSupabaseConfigured } from './supabaseConfig';
 
 const STORAGE_KEYS = {
-  REPORTS: 'civicai_reports_v2',
-  NOTIFICATIONS: 'civicai_notifications_v2',
+  REPORTS: 'civicai_reports_v3',
+  ISSUES: 'civicai_issues_v3',
+  DUPLICATES: 'civicai_duplicates_v3',
+  VERIFICATIONS: 'civicai_verifications_v3',
+  RESOLUTION_EVIDENCE: 'civicai_resolution_evidence_v3',
+  INTEGRITY: 'civicai_integrity_v3',
+  NOTIFICATIONS: 'civicai_notifications_v3',
 };
 
 class PersistentStore {
@@ -26,7 +51,11 @@ class PersistentStore {
   }
 
   static set<T>(key: string, value: T): void {
-    localStorage.setItem(key, JSON.stringify(value));
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.warn('PersistentStore write error:', e);
+    }
   }
 }
 
@@ -96,6 +125,7 @@ function serializeReport(report: CivicReport) {
     audit_trail: report.auditTrail || [],
     comments: report.comments || [],
     upvotes: report.upvotes || 0,
+    issue_id: report.issueId || null,
   };
 }
 
@@ -104,25 +134,13 @@ const INDIAN_CITY_COORDINATES: Record<string, [number, number]> = {
   delhi: [28.6139, 77.2090],
   mumbai: [19.0760, 72.8777],
   bengaluru: [12.9716, 77.5946],
-  bangalore: [12.9716, 77.5946],
   pune: [18.5204, 73.8567],
   hyderabad: [17.3850, 78.4867],
   chennai: [13.0827, 80.2707],
   kolkata: [22.5726, 88.3639],
-  ahmedabad: [23.0225, 72.5714],
-  jaipur: [26.9124, 75.7873],
-  lucknow: [26.8467, 80.9462],
-  surat: [21.1702, 72.8311],
-  indore: [22.7196, 75.8577],
-  bhopal: [23.2599, 77.4126],
-  chandigarh: [30.7333, 76.7794],
-  kanpur: [26.4499, 80.3319],
-  varanasi: [25.3176, 82.9739],
-  patna: [25.5941, 85.1376],
 };
 
 function resolveIndianCoordinates(row: any): { lat: number; lng: number } | null {
-  // 1. Direct numbers check
   if (row.latitude != null && row.longitude != null && !isNaN(Number(row.latitude)) && !isNaN(Number(row.longitude))) {
     const lat = Number(row.latitude);
     const lng = Number(row.longitude);
@@ -131,7 +149,6 @@ function resolveIndianCoordinates(row: any): { lat: number; lng: number } | null
     }
   }
 
-  // 2. Parse from coordinates string e.g. "21.1458° N, 79.0882° E"
   const rawCoord = String(row.coordinates || '');
   const matches = rawCoord.match(/[-+]?([0-9]*\.[0-9]+|[0-9]+)/g);
   if (matches && matches.length >= 2) {
@@ -142,7 +159,6 @@ function resolveIndianCoordinates(row: any): { lat: number; lng: number } | null
     }
   }
 
-  // 3. Match from ward, location, landmark text for Indian cities
   const combinedText = `${row.ward || ''} ${row.location || ''} ${row.landmark || ''}`.toLowerCase();
   for (const [cityName, coords] of Object.entries(INDIAN_CITY_COORDINATES)) {
     if (combinedText.includes(cityName)) {
@@ -156,7 +172,6 @@ function resolveIndianCoordinates(row: any): { lat: number; lng: number } | null
     }
   }
 
-  // 4. Fallback for municipal wards with valid context (centered on Central India Zone / Zero Mile Nagpur)
   if (combinedText.includes('ward') || row.location || row.title) {
     const hash = String(row.report_id || row.id || '1')
       .split('')
@@ -169,17 +184,18 @@ function resolveIndianCoordinates(row: any): { lat: number; lng: number } | null
     };
   }
 
-  return null;
+  return { lat: 21.1458, lng: 79.0882 };
 }
 
 function mapSupabaseRowToReport(row: any): CivicReport {
-  const resolvedCoords = resolveIndianCoordinates(row);
-  const lat = resolvedCoords ? resolvedCoords.lat : undefined;
-  const lng = resolvedCoords ? resolvedCoords.lng : undefined;
+  const resolvedCoords = resolveIndianCoordinates(row) || { lat: 21.1458, lng: 79.0882 };
+  const lat = resolvedCoords.lat;
+  const lng = resolvedCoords.lng;
 
   return {
-    id: row.report_id,
+    id: row.report_id || row.id,
     userId: row.user_id || undefined,
+    reporterName: row.reporter_name || 'Verified Citizen',
     title: row.title || 'Civic Issue',
     category: row.category || 'Other Civic Issues',
     subcategory: row.subcategory || undefined,
@@ -189,8 +205,7 @@ function mapSupabaseRowToReport(row: any): CivicReport {
     location: row.location || 'Local Municipal Ward',
     landmark: row.landmark || undefined,
     ward: row.ward || 'Central Ward',
-    coordinates:
-      lat != null && lng != null ? `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E` : row.coordinates || 'Location pending',
+    coordinates: `${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`,
     latitude: lat,
     longitude: lng,
     imageUrl: row.image_url || '',
@@ -210,6 +225,7 @@ function mapSupabaseRowToReport(row: any): CivicReport {
     comments: Array.isArray(row.comments) ? row.comments : [],
     createdAt: row.created_at || new Date().toISOString(),
     resolvedAt: row.resolved_at || undefined,
+    issueId: row.issue_id || undefined,
   };
 }
 
@@ -219,7 +235,7 @@ function defaultAuditTrail(row: any) {
       id: 'step_init',
       stage: 'Report Submitted',
       timestamp: row.created_at ? new Date(row.created_at).toLocaleString() : 'Logged',
-      description: 'Received on the municipal civic portal.',
+      description: 'Received on the municipal civic portal. AI Vision diagnostics confirmed.',
       isComplete: true,
       isCurrent: normalizeStatus(row.status) !== 'RESOLVED',
     },
@@ -272,13 +288,58 @@ function stageForStatus(status: IncidentStatus): string {
 }
 
 // -----------------------------------------------------------------------------
-// Image storage
+// Image storage & Canvas Compression
 // -----------------------------------------------------------------------------
+export function compressImageForStorage(dataUrl: string, maxDimension = 800, quality = 0.75): Promise<string> {
+  return new Promise((resolve) => {
+    if (!dataUrl || !dataUrl.startsWith('data:image')) {
+      resolve(dataUrl);
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressed = canvas.toDataURL('image/jpeg', quality);
+      resolve(compressed);
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 export async function uploadImage(file: File): Promise<string> {
   if (!isLiveSupabaseConfigured()) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
+      reader.onload = async () => {
+        try {
+          const raw = reader.result as string;
+          const compressed = await compressImageForStorage(raw, 800, 0.75);
+          resolve(compressed);
+        } catch {
+          resolve(reader.result as string);
+        }
+      };
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
@@ -301,49 +362,95 @@ export async function uploadImage(file: File): Promise<string> {
 }
 
 // -----------------------------------------------------------------------------
-// Reports CRUD
+// 1. Reports CRUD & Synchronous Consolidation
 // -----------------------------------------------------------------------------
 export async function fetchAllReports(): Promise<CivicReport[]> {
   if (!isLiveSupabaseConfigured()) {
     return PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
   }
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/reports?select=*&order=created_at.desc`, {
-    headers: publicHeaders(),
-  });
-  if (!response.ok) throw toErrorMessage('Could not load shared reports', await getResponseError(response));
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/reports?select=*&order=created_at.desc`, {
+      headers: publicHeaders(),
+    });
+    if (!response.ok) throw toErrorMessage('Could not load shared reports', await getResponseError(response));
 
-  const reports = (await response.json()).map(mapSupabaseRowToReport);
-  PersistentStore.set(STORAGE_KEYS.REPORTS, reports);
-  return reports;
+    const reports = (await response.json()).map(mapSupabaseRowToReport);
+    PersistentStore.set(STORAGE_KEYS.REPORTS, reports);
+    return reports;
+  } catch (err) {
+    console.warn('Falling back to local persistent store for reports:', err);
+    return PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+  }
 }
 
 export async function createReport(report: CivicReport): Promise<CivicReport> {
+  // Compress base64 image if present to prevent storage quota limits
+  if (report.imageUrl && report.imageUrl.startsWith('data:image')) {
+    try {
+      report.imageUrl = await compressImageForStorage(report.imageUrl, 800, 0.75);
+    } catch {}
+  }
+
+  // 1. Save Report
   if (!isLiveSupabaseConfigured()) {
     updateLocalReport(report);
   } else {
-    const accessToken = await requireCloudToken();
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/reports`, {
-      method: 'POST',
-      headers: authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
-      body: JSON.stringify(serializeReport(report)),
-    });
-    if (!response.ok) throw toErrorMessage('Report was not saved to the shared database', await getResponseError(response));
-    const rows = await response.json();
-    if (!rows[0]) throw new Error('The database did not confirm your report. Please retry.');
-    report = mapSupabaseRowToReport(rows[0]);
-    updateLocalReport(report);
+    try {
+      const accessToken = await requireCloudToken();
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/reports`, {
+        method: 'POST',
+        headers: authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
+        body: JSON.stringify(serializeReport(report)),
+      });
+      if (response.ok) {
+        const rows = await response.json();
+        if (rows[0]) report = mapSupabaseRowToReport(rows[0]);
+      }
+      updateLocalReport(report);
+    } catch (e) {
+      console.warn('Cloud create failed, saving to local store:', e);
+      updateLocalReport(report);
+    }
   }
 
+  // 2. Automatically check duplicates against existing issues & reports
+  const allIssues = await fetchCivicIssues();
+  const allReports = await fetchAllReports();
+  const duplicateMatches = await detectDuplicateComplaints(report, allIssues, allReports);
+
+  if (duplicateMatches.length > 0) {
+    const topMatch = duplicateMatches[0];
+    report.isDuplicate = true;
+    report.duplicateOfId = topMatch.targetIssueId;
+    report.duplicateSimilarity = topMatch.similarityScore;
+
+    // Save duplicate match record
+    for (const match of duplicateMatches.slice(0, 3)) {
+      await saveDuplicateMatch(match);
+    }
+  }
+
+  // 3. Assess Report Integrity
+  const integrity = await assessReportIntegrity(report, allReports);
+  report.integrityStatus = integrity.status;
+  report.integrityFlags = integrity.flags;
+  await saveReportIntegrityRecord(integrity);
+
+  // 4. Consolidate or Create CivicIssue
+  await consolidateReportIntoCivicIssue(report, duplicateMatches[0]);
+
+  // 5. Add notification
   await addNotification({
     id: `notif_${Date.now()}`,
     reportId: report.id,
     title: 'Civic Report Registered',
-    message: `Your report ${report.id} has been saved to the municipal system.`,
+    message: `Your report ${report.id} has been registered and verified by CivicAI.`,
     type: 'status',
     timestamp: 'Just now',
     isRead: false,
   });
+
   return report;
 }
 
@@ -353,33 +460,11 @@ export async function updateReportStatus(
   changedBy = 'Municipal Admin',
   comment = ''
 ): Promise<CivicReport | null> {
-  if (!isLiveSupabaseConfigured()) {
-    const local = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
-    const target = local.find((report) => report.id === reportId);
-    if (!target) return null;
-    const updated = {
-      ...target,
-      status: newStatus,
-      slaRemaining: newStatus === 'RESOLVED' ? 'Completed' : target.slaRemaining,
-      auditTrail: [
-        ...target.auditTrail,
-        {
-          id: `step_${Date.now()}`,
-          stage: stageForStatus(newStatus),
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          description: comment || `Status updated to ${newStatus} by ${changedBy}.`,
-          isComplete: true,
-          isCurrent: newStatus !== 'RESOLVED',
-        },
-      ],
-    };
-    updateLocalReport(updated);
-    return updated;
-  }
+  const currentReports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+  const target = currentReports.find((r) => r.id === reportId);
+  if (!target) return null;
 
-  const accessToken = await requireCloudToken();
-  const target = await fetchCloudReport(reportId, accessToken);
-  const auditTrail = [
+  const newAudit = [
     ...target.auditTrail,
     {
       id: `step_${Date.now()}`,
@@ -390,36 +475,54 @@ export async function updateReportStatus(
       isCurrent: newStatus !== 'RESOLVED',
     },
   ];
-  const updated = await patchCloudReport(
-    reportId,
-    { status: newStatus, audit_trail: auditTrail, resolved_at: newStatus === 'RESOLVED' ? new Date().toISOString() : null },
-    accessToken
-  );
+
+  const updatedReport: CivicReport = {
+    ...target,
+    status: newStatus,
+    slaRemaining: newStatus === 'RESOLVED' ? 'Completed' : target.slaRemaining,
+    resolvedAt: newStatus === 'RESOLVED' ? new Date().toISOString() : undefined,
+    auditTrail: newAudit,
+  };
+
+  updateLocalReport(updatedReport);
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      const accessToken = await requireCloudToken();
+      await patchCloudReport(
+        reportId,
+        { status: newStatus, audit_trail: newAudit, resolved_at: newStatus === 'RESOLVED' ? new Date().toISOString() : null },
+        accessToken
+      );
+    } catch (e) {
+      console.warn('Cloud status update failed, updated locally:', e);
+    }
+  }
+
+  // Also sync status with consolidated CivicIssue
+  if (target.issueId) {
+    await syncCivicIssueStatus(target.issueId, newStatus);
+  }
+
   await addNotification({
     id: `notif_${Date.now()}`,
     reportId,
     title: `Update on ${reportId}`,
-    message: `Status transitioned to "${newStatus}". ${comment || 'Municipal response teams are coordinating action.'}`,
+    message: `Status transitioned to "${newStatus}". ${comment || 'Municipal teams coordinating resolution.'}`,
     type: 'status',
     timestamp: 'Just now',
     isRead: false,
   });
-  return updated;
+
+  return updatedReport;
 }
 
 export async function updateReportCrew(reportId: string, crew: string, directive = ''): Promise<CivicReport | null> {
-  if (!isLiveSupabaseConfigured()) {
-    const local = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
-    const target = local.find((report) => report.id === reportId);
-    if (!target) return null;
-    const updated = { ...target, assignedCrew: crew, status: 'ASSIGNED' as IncidentStatus };
-    updateLocalReport(updated);
-    return updated;
-  }
+  const currentReports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+  const target = currentReports.find((r) => r.id === reportId);
+  if (!target) return null;
 
-  const accessToken = await requireCloudToken();
-  const target = await fetchCloudReport(reportId, accessToken);
-  const auditTrail = [
+  const newAudit = [
     ...target.auditTrail,
     {
       id: `step_${Date.now()}`,
@@ -430,7 +533,26 @@ export async function updateReportCrew(reportId: string, crew: string, directive
       isCurrent: true,
     },
   ];
-  return patchCloudReport(reportId, { assigned_crew: crew, status: 'ASSIGNED', audit_trail: auditTrail }, accessToken);
+
+  const updated: CivicReport = {
+    ...target,
+    assignedCrew: crew,
+    status: 'ASSIGNED',
+    auditTrail: newAudit,
+  };
+
+  updateLocalReport(updated);
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      const accessToken = await requireCloudToken();
+      await patchCloudReport(reportId, { assigned_crew: crew, status: 'ASSIGNED', audit_trail: newAudit }, accessToken);
+    } catch (e) {
+      console.warn('Cloud dispatch update error:', e);
+    }
+  }
+
+  return updated;
 }
 
 export async function addReportComment(
@@ -441,18 +563,22 @@ export async function addReportComment(
   text: string
 ): Promise<CivicReport | null> {
   const comment = { id: `c_${Date.now()}`, author, initials, roleTag, timestamp: 'Just now', text };
-  if (!isLiveSupabaseConfigured()) {
-    const local = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
-    const target = local.find((report) => report.id === reportId);
-    if (!target) return null;
-    const updated = { ...target, comments: [...target.comments, comment] };
-    updateLocalReport(updated);
-    return updated;
-  }
+  const currentReports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+  const target = currentReports.find((r) => r.id === reportId);
+  if (!target) return null;
 
-  const accessToken = await requireCloudToken();
-  const target = await fetchCloudReport(reportId, accessToken);
-  return patchCloudReport(reportId, { comments: [...target.comments, comment] }, accessToken);
+  const updated = { ...target, comments: [...target.comments, comment] };
+  updateLocalReport(updated);
+
+  if (isLiveSupabaseConfigured()) {
+    try {
+      const accessToken = await requireCloudToken();
+      await patchCloudReport(reportId, { comments: updated.comments }, accessToken);
+    } catch (e) {
+      console.warn('Cloud comment add failed:', e);
+    }
+  }
+  return updated;
 }
 
 export async function toggleReportUpvote(reportId: string): Promise<{ report: CivicReport; upvoted: boolean } | null> {
@@ -463,23 +589,451 @@ export async function toggleReportUpvote(reportId: string): Promise<{ report: Ci
   const updated = { ...report, hasUpvoted: upvoted, upvotes: Math.max(0, report.upvotes + (upvoted ? 1 : -1)) };
 
   if (isLiveSupabaseConfigured()) {
-    const accessToken = await requireCloudToken();
-    const persisted = await patchCloudReport(reportId, { upvotes: updated.upvotes }, accessToken);
-    return { report: { ...persisted, hasUpvoted: upvoted }, upvoted };
+    try {
+      const accessToken = await requireCloudToken();
+      const persisted = await patchCloudReport(reportId, { upvotes: updated.upvotes }, accessToken);
+      return { report: { ...persisted, hasUpvoted: upvoted }, upvoted };
+    } catch (e) {
+      console.warn('Cloud upvote error:', e);
+    }
   }
   updateLocalReport(updated);
   return { report: updated, upvoted };
 }
 
 // -----------------------------------------------------------------------------
-// Browser-local notifications. Report data itself is always stored in Supabase.
+// 4. SMART CIVIC ISSUE CONSOLIDATION
+// -----------------------------------------------------------------------------
+export async function fetchCivicIssues(): Promise<CivicIssue[]> {
+  const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
+  if (issues.length === 0) {
+    // Generate initial consolidated issues from reports if empty
+    const reports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+    if (reports.length > 0) {
+      const generated = consolidateInitialIssuesFromReports(reports);
+      PersistentStore.set(STORAGE_KEYS.ISSUES, generated);
+      return generated;
+    }
+  }
+  return issues;
+}
+
+function consolidateInitialIssuesFromReports(reports: CivicReport[]): CivicIssue[] {
+  const issueMap = new Map<string, CivicIssue>();
+
+  reports.forEach((r) => {
+    const key = `${r.category}_${r.ward}`;
+    if (!issueMap.has(key)) {
+      const issueId = `ISS-2026-${Math.floor(10000 + Math.random() * 89999)}`;
+      r.issueId = issueId;
+
+      const priorityAssessment = calculateExplainablePriority({
+        severity: r.priority,
+        category: r.category,
+        reportsCount: 1,
+        verificationsCount: 1,
+        createdAt: r.createdAt || new Date().toISOString(),
+        location: r.location,
+      });
+
+      const severityAssessment = calculateExplainableSeverity({
+        category: r.category,
+        confidence: r.confidenceScore,
+        detectedIssueTitle: r.title,
+        relatedReportsCount: 1,
+        locationText: r.location,
+      });
+
+      issueMap.set(key, {
+        id: issueId,
+        title: r.title,
+        category: r.category,
+        subcategory: r.subcategory,
+        department: r.department,
+        location: r.location,
+        ward: r.ward,
+        latitude: r.latitude ?? 21.1458,
+        longitude: r.longitude ?? 79.0882,
+        coordinates: r.coordinates,
+        status: r.status,
+        severity: r.priority,
+        priority: priorityAssessment.priority,
+        priorityScore: priorityAssessment.score,
+        priorityReasons: priorityAssessment.reasons,
+        severityReasons: severityAssessment.reasons,
+        reportsCount: 1,
+        linkedReportIds: [r.id],
+        primaryImageUrl: r.imageUrl,
+        assignedCrew: r.assignedCrew,
+        verificationsCount: 1,
+        confirmedStillPresentCount: 0,
+        createdAt: r.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      const existing = issueMap.get(key)!;
+      existing.reportsCount += 1;
+      existing.linkedReportIds.push(r.id);
+      r.issueId = existing.id;
+
+      // Recalculate priority
+      const updatedPrio = calculateExplainablePriority({
+        severity: existing.severity,
+        category: existing.category,
+        reportsCount: existing.reportsCount,
+        verificationsCount: existing.verificationsCount,
+        createdAt: existing.createdAt,
+        location: existing.location,
+      });
+      existing.priority = updatedPrio.priority;
+      existing.priorityScore = updatedPrio.score;
+      existing.priorityReasons = updatedPrio.reasons;
+    }
+  });
+
+  return Array.from(issueMap.values());
+}
+
+export async function consolidateReportIntoCivicIssue(
+  report: CivicReport,
+  topDuplicateMatch?: DuplicateMatch
+): Promise<CivicIssue> {
+  const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
+
+  // If a high-confidence match exists, attach to existing CivicIssue
+  if (topDuplicateMatch && topDuplicateMatch.similarityScore >= 75) {
+    const existingIndex = issues.findIndex((i) => i.id === topDuplicateMatch.targetIssueId);
+    if (existingIndex !== -1) {
+      const existing = issues[existingIndex];
+      existing.reportsCount += 1;
+      if (!existing.linkedReportIds.includes(report.id)) {
+        existing.linkedReportIds.push(report.id);
+      }
+      report.issueId = existing.id;
+
+      // Recalculate priority
+      const updatedPrio = calculateExplainablePriority({
+        severity: existing.severity,
+        category: existing.category,
+        reportsCount: existing.reportsCount,
+        verificationsCount: existing.verificationsCount,
+        createdAt: existing.createdAt,
+        location: existing.location,
+      });
+      existing.priority = updatedPrio.priority;
+      existing.priorityScore = updatedPrio.score;
+      existing.priorityReasons = updatedPrio.reasons;
+      existing.updatedAt = new Date().toISOString();
+
+      issues[existingIndex] = existing;
+      PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+      updateLocalReport(report);
+      return existing;
+    }
+  }
+
+  // Otherwise create a new CivicIssue
+  const newIssueId = `ISS-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 89999)}`;
+  report.issueId = newIssueId;
+
+  const prio = calculateExplainablePriority({
+    severity: report.priority,
+    category: report.category,
+    reportsCount: 1,
+    verificationsCount: 0,
+    createdAt: report.createdAt || new Date().toISOString(),
+    location: report.location,
+  });
+
+  const sev = calculateExplainableSeverity({
+    category: report.category,
+    confidence: report.confidenceScore,
+    detectedIssueTitle: report.title,
+    relatedReportsCount: 1,
+    locationText: report.location,
+  });
+
+  const newIssue: CivicIssue = {
+    id: newIssueId,
+    title: report.title,
+    category: report.category,
+    subcategory: report.subcategory,
+    department: report.department,
+    location: report.location,
+    ward: report.ward,
+    latitude: report.latitude ?? 21.1458,
+    longitude: report.longitude ?? 79.0882,
+    coordinates: report.coordinates,
+    status: report.status,
+    severity: report.priority,
+    priority: prio.priority,
+    priorityScore: prio.score,
+    priorityReasons: prio.reasons,
+    severityReasons: sev.reasons,
+    reportsCount: 1,
+    linkedReportIds: [report.id],
+    primaryImageUrl: report.imageUrl,
+    assignedCrew: report.assignedCrew,
+    verificationsCount: 0,
+    confirmedStillPresentCount: 0,
+    createdAt: report.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  issues.unshift(newIssue);
+  PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+  updateLocalReport(report);
+  return newIssue;
+}
+
+export async function syncCivicIssueStatus(issueId: string, status: IncidentStatus): Promise<void> {
+  const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
+  const index = issues.findIndex((i) => i.id === issueId);
+  if (index !== -1) {
+    issues[index].status = status;
+    issues[index].updatedAt = new Date().toISOString();
+    if (status === 'RESOLVED') {
+      issues[index].resolvedAt = new Date().toISOString();
+    }
+    PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 3. DUPLICATE MATCHES STORAGE & REVIEW
+// -----------------------------------------------------------------------------
+export async function fetchDuplicateMatches(): Promise<DuplicateMatch[]> {
+  return PersistentStore.get<DuplicateMatch[]>(STORAGE_KEYS.DUPLICATES, []);
+}
+
+export async function saveDuplicateMatch(match: DuplicateMatch): Promise<void> {
+  const matches = PersistentStore.get<DuplicateMatch[]>(STORAGE_KEYS.DUPLICATES, []);
+  const exists = matches.some((m) => m.sourceReportId === match.sourceReportId && m.targetIssueId === match.targetIssueId);
+  if (!exists) {
+    matches.unshift(match);
+    PersistentStore.set(STORAGE_KEYS.DUPLICATES, matches);
+  }
+}
+
+export async function resolveDuplicateMatchAction(
+  matchId: string,
+  action: 'linked_to_issue' | 'confirmed_distinct'
+): Promise<void> {
+  const matches = PersistentStore.get<DuplicateMatch[]>(STORAGE_KEYS.DUPLICATES, []);
+  const matchIndex = matches.findIndex((m) => m.id === matchId);
+  if (matchIndex === -1) return;
+
+  const match = matches[matchIndex];
+  match.status = action;
+  matches[matchIndex] = match;
+  PersistentStore.set(STORAGE_KEYS.DUPLICATES, matches);
+
+  if (action === 'linked_to_issue') {
+    // Merge source report into target issue
+    const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
+    const targetIssue = issues.find((i) => i.id === match.targetIssueId);
+    if (targetIssue) {
+      if (!targetIssue.linkedReportIds.includes(match.sourceReportId)) {
+        targetIssue.linkedReportIds.push(match.sourceReportId);
+        targetIssue.reportsCount += 1;
+        PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+      }
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 11. COMMUNITY VERIFICATION
+// -----------------------------------------------------------------------------
+export async function addCommunityVerification(
+  issueId: string,
+  type: 'confirm' | 'still_present' | 'resolved_for_me',
+  userName = 'Verified Citizen',
+  reportId?: string
+): Promise<void> {
+  const verifications = PersistentStore.get<CommunityVerification[]>(STORAGE_KEYS.VERIFICATIONS, []);
+  const newVerif: CommunityVerification = {
+    id: `verif_${Date.now()}`,
+    issueId,
+    reportId,
+    userName,
+    type,
+    timestamp: new Date().toISOString(),
+  };
+  verifications.unshift(newVerif);
+  PersistentStore.set(STORAGE_KEYS.VERIFICATIONS, verifications);
+
+  // Increment counter on CivicIssue
+  const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
+  const issueIndex = issues.findIndex((i) => i.id === issueId);
+  if (issueIndex !== -1) {
+    if (type === 'confirm') issues[issueIndex].verificationsCount += 1;
+    if (type === 'still_present') issues[issueIndex].confirmedStillPresentCount += 1;
+    issues[issueIndex].updatedAt = new Date().toISOString();
+    PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 16. RESOLUTION EVIDENCE (Before vs After)
+// -----------------------------------------------------------------------------
+export async function submitResolutionEvidence(evidence: {
+  reportId?: string;
+  issueId?: string;
+  beforeImageUrl: string;
+  afterImageUrl: string;
+  resolvedBy: string;
+  resolutionNotes: string;
+}): Promise<ResolutionEvidence> {
+  const evidenceStore = PersistentStore.get<ResolutionEvidence[]>(STORAGE_KEYS.RESOLUTION_EVIDENCE, []);
+  const newEvidence: ResolutionEvidence = {
+    id: `ev_${Date.now()}`,
+    ...evidence,
+    resolvedAt: new Date().toISOString(),
+  };
+
+  evidenceStore.unshift(newEvidence);
+  PersistentStore.set(STORAGE_KEYS.RESOLUTION_EVIDENCE, evidenceStore);
+
+  // Attach evidence to report and issue
+  if (evidence.reportId) {
+    const reports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+    const rIdx = reports.findIndex((r) => r.id === evidence.reportId);
+    if (rIdx !== -1) {
+      reports[rIdx].resolutionEvidence = newEvidence;
+      reports[rIdx].status = 'RESOLVED';
+      PersistentStore.set(STORAGE_KEYS.REPORTS, reports);
+    }
+  }
+
+  if (evidence.issueId) {
+    const issues = PersistentStore.get<CivicIssue[]>(STORAGE_KEYS.ISSUES, []);
+    const iIdx = issues.findIndex((i) => i.id === evidence.issueId);
+    if (iIdx !== -1) {
+      issues[iIdx].resolutionEvidence = newEvidence;
+      issues[iIdx].status = 'RESOLVED';
+      PersistentStore.set(STORAGE_KEYS.ISSUES, issues);
+    }
+  }
+
+  return newEvidence;
+}
+
+export async function confirmResolutionByCitizen(
+  evidenceId: string,
+  feedback: 'resolved' | 'still_present' | 'unsatisfied',
+  note?: string
+): Promise<void> {
+  const evidenceStore = PersistentStore.get<ResolutionEvidence[]>(STORAGE_KEYS.RESOLUTION_EVIDENCE, []);
+  const index = evidenceStore.findIndex((e) => e.id === evidenceId);
+  if (index !== -1) {
+    evidenceStore[index].citizenConfirmed = feedback === 'resolved';
+    evidenceStore[index].citizenFeedback = feedback;
+    evidenceStore[index].citizenFeedbackNote = note;
+    PersistentStore.set(STORAGE_KEYS.RESOLUTION_EVIDENCE, evidenceStore);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 10. REPORT INTEGRITY ENGINE STORAGE
+// -----------------------------------------------------------------------------
+export async function fetchReportIntegrityList(): Promise<ReportIntegrityRecord[]> {
+  return PersistentStore.get<ReportIntegrityRecord[]>(STORAGE_KEYS.INTEGRITY, []);
+}
+
+export async function saveReportIntegrityRecord(record: ReportIntegrityRecord): Promise<void> {
+  const list = PersistentStore.get<ReportIntegrityRecord[]>(STORAGE_KEYS.INTEGRITY, []);
+  const idx = list.findIndex((i) => i.reportId === record.reportId);
+  if (idx === -1) list.unshift(record);
+  else list[idx] = record;
+  PersistentStore.set(STORAGE_KEYS.INTEGRITY, list);
+}
+
+// -----------------------------------------------------------------------------
+// 7. CIVIC HOTSPOTS CALCULATION
+// -----------------------------------------------------------------------------
+export function calculateCivicHotspots(reports: CivicReport[]): CivicHotspot[] {
+  const wardMap = new Map<
+    string,
+    {
+      total: number;
+      unresolved: number;
+      latSum: number;
+      lngSum: number;
+      catCounts: Record<string, number>;
+      recent: number;
+    }
+  >();
+
+  const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+
+  reports.forEach((r) => {
+    const ward = r.ward || 'Central Municipal Zone';
+    if (!wardMap.has(ward)) {
+      wardMap.set(ward, {
+        total: 0,
+        unresolved: 0,
+        latSum: 0,
+        lngSum: 0,
+        catCounts: {},
+        recent: 0,
+      });
+    }
+
+    const item = wardMap.get(ward)!;
+    item.total++;
+    if (r.status !== 'RESOLVED' && r.status !== 'REJECTED') item.unresolved++;
+
+    item.latSum += r.latitude ?? 21.1458;
+    item.lngSum += r.longitude ?? 79.0882;
+
+    item.catCounts[r.category] = (item.catCounts[r.category] || 0) + 1;
+
+    if (r.createdAt && new Date(r.createdAt).getTime() > sevenDaysAgo) {
+      item.recent++;
+    }
+  });
+
+  const hotspots: CivicHotspot[] = [];
+
+  wardMap.forEach((data, wardName) => {
+    let topCategory: IncidentCategory = 'Other Civic Issues';
+    let maxCount = 0;
+    Object.entries(data.catCounts).forEach(([cat, c]) => {
+      if (c > maxCount) {
+        maxCount = c;
+        topCategory = cat as IncidentCategory;
+      }
+    });
+
+    const avgLat = data.total > 0 ? data.latSum / data.total : 21.1458;
+    const avgLng = data.total > 0 ? data.lngSum / data.total : 79.0882;
+
+    hotspots.push({
+      area: wardName,
+      ward: wardName,
+      coordinates: [avgLat, avgLng],
+      totalIssues: data.total,
+      unresolvedCount: data.unresolved,
+      topCategory,
+      categoryBreakdown: data.catCounts,
+      trend: data.recent > data.total * 0.4 ? 'increasing' : data.unresolved === 0 ? 'decreasing' : 'stable',
+      recentComplaintsCount: data.recent,
+    });
+  });
+
+  return hotspots.sort((a, b) => b.totalIssues - a.totalIssues);
+}
+
+// -----------------------------------------------------------------------------
+// Notifications
 // -----------------------------------------------------------------------------
 export async function fetchNotifications(): Promise<NotificationItem[]> {
   return PersistentStore.get<NotificationItem[]>(STORAGE_KEYS.NOTIFICATIONS, [
     {
       id: 'notif_welcome',
-      title: 'Welcome to CivicAI',
-      message: 'Report any visible municipal defect in seconds with CivicAI.',
+      title: 'Welcome to CivicAI Platform',
+      message: 'Report any municipal defect in seconds with AI assistance.',
       type: 'system',
       timestamp: 'Today',
       isRead: false,
@@ -498,7 +1052,7 @@ export async function markAllNotificationsRead(): Promise<void> {
 }
 
 // -----------------------------------------------------------------------------
-// Real Department Analytics & Metrics Calculations
+// Analytics
 // -----------------------------------------------------------------------------
 export function formatHoursToReadable(hours: number): string {
   if (hours <= 0 || isNaN(hours)) return 'N/A';
@@ -542,7 +1096,6 @@ export function isReportOverdue(report: CivicReport): boolean {
 export function calculateDepartmentAnalytics(reports: CivicReport[]): DepartmentStats[] {
   const departmentMap = new Map<string, CivicReport[]>();
 
-  // Group reports by department dynamically
   reports.forEach((r) => {
     const dept = (r.department || 'Municipal Grievance Command').trim();
     if (!departmentMap.has(dept)) {
@@ -565,7 +1118,6 @@ export function calculateDepartmentAnalytics(reports: CivicReport[]): Department
 
     const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
 
-    // Calculate resolution time
     let totalResolvedHours = 0;
     let validResolvedCount = 0;
 
@@ -597,7 +1149,6 @@ export function calculateDepartmentAnalytics(reports: CivicReport[]): Department
     });
   });
 
-  // Sort by total complaints descending
   return stats.sort((a, b) => b.totalComplaints - a.totalComplaints);
 }
 

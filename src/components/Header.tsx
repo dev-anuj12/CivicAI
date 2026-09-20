@@ -1,6 +1,8 @@
 import React, { useRef } from 'react';
-import { TabType, UserProfile, UserRole } from '../types';
+import { Language, TabType, UserProfile, UserRole } from '../types';
 import { CIVIC_LOGO_URL } from '../data/mockData';
+import { useTranslation } from '../i18n/translations';
+import { CivicLogo } from './CivicLogo';
 
 interface HeaderProps {
   currentTab: TabType;
@@ -27,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   onGoBack,
   onUnlockAdmin,
 }) => {
+  const { language, setLanguage, t } = useTranslation();
   const isReportFlow = currentTab === 'report-issue-flow';
 
   // Secret 5-click logo trigger for authorized administrators
@@ -50,12 +53,11 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  let subtitle = 'Citizen Portal';
-  if (currentTab === 'report-issue-flow') subtitle = 'Report Civic Issue';
-  else if (currentTab === 'my-reports-tracking') subtitle = 'My Reports & Tracking';
-  else if (currentTab === 'admin-command-center' || userRole === 'admin') subtitle = 'Municipal Command Center';
+  let subtitle = t('nav.citizenPortal');
+  if (currentTab === 'report-issue-flow') subtitle = t('nav.reportIssue');
+  else if (currentTab === 'my-reports-tracking') subtitle = t('nav.myReports');
+  else if (currentTab === 'admin-command-center' || userRole === 'admin') subtitle = t('nav.adminCommand');
 
-  // Real user initials
   const initials = currentUser?.fullName
     ? currentUser.fullName
         .split(' ')
@@ -78,16 +80,12 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="material-symbols-outlined text-[22px]">arrow_back</span>
             </button>
           )}
-          <img
-            alt="CivicAI Logo"
-            className="h-8 w-auto object-contain shrink-0 cursor-pointer select-none active:scale-95 transition-transform"
-            src={CIVIC_LOGO_URL}
-            onClick={handleLogoClick}
-            title="CivicAI • Unified Citizen Platform"
-          />
-          <div className="flex flex-col min-w-0 truncate">
+          <div onClick={handleLogoClick} className="cursor-pointer">
+            <CivicLogo size="md" showText={false} />
+          </div>
+          <div className="flex flex-col min-w-0 truncate cursor-pointer" onClick={handleLogoClick}>
             <span className="font-headline-md text-base sm:text-lg text-slate-900 font-bold tracking-tight leading-tight">
-              CivicAI
+              {t('app.title')}
             </span>
             <span className="font-label-badge text-[11px] text-teal-800 font-semibold leading-none truncate">
               {subtitle}
@@ -96,19 +94,40 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {/* Multi-Language Selector Dropdown */}
+          <div className="relative">
+            <select
+              value={language}
+              onChange={(e) => {
+                const newLang = e.target.value as Language;
+                setLanguage(newLang);
+                onShowToast(
+                  newLang === 'hi' ? 'भाषा बदलकर हिन्दी कर दी गई' : newLang === 'mr' ? 'भाषा मराठीत बदलली' : 'Language set to English',
+                  'translate'
+                );
+              }}
+              className="h-8 px-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-600 transition-colors cursor-pointer flex items-center"
+              aria-label="Select Language"
+            >
+              <option value="en">🌐 English</option>
+              <option value="hi">🇮🇳 हिन्दी</option>
+              <option value="mr">🚩 मराठी</option>
+            </select>
+          </div>
+
           {/* Admin Mode Badge & Exit Switcher (ONLY visible when authenticated as Admin) */}
           {userRole === 'admin' ? (
             <div className="flex items-center bg-amber-50 border border-amber-300 rounded-full px-3 py-1 gap-2 shadow-xs animate-in fade-in">
               <span className="flex items-center gap-1 text-amber-900 text-xs font-bold font-label-badge">
                 <span className="material-symbols-outlined text-[16px] text-amber-700">shield_person</span>
-                <span>Super Admin</span>
+                <span>{t('nav.superAdmin')}</span>
               </span>
               <button
                 type="button"
                 className="text-[11px] text-amber-800 hover:text-amber-950 font-bold cursor-pointer underline ml-1"
                 onClick={() => onRoleChange('citizen')}
               >
-                Exit Admin
+                {t('btn.exitAdmin')}
               </button>
             </div>
           ) : null}
@@ -140,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
               {currentUser ? 'account_circle' : 'login'}
             </span>
             <span className="hidden sm:inline font-medium text-[11px]">
-              {currentUser ? currentUser.fullName.split(' ')[0] : 'Sign In'}
+              {currentUser ? currentUser.fullName.split(' ')[0] : t('btn.signIn')}
             </span>
             {currentUser && <span className="sm:hidden font-bold text-[10px]">{initials}</span>}
           </button>

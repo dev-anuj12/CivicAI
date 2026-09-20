@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CivicReport, UserProfile } from '../types';
 import { AuthService, MASTER_ADMIN_EMAIL } from '../services/authService';
+import { CivicLogo } from './CivicLogo';
 
 // =============================================================================
 // 1. SECRET ADMIN GATE MODAL (Completely Hidden from Public View)
@@ -194,7 +195,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
       <div className="bg-white max-w-md w-full rounded-[28px] shadow-2xl p-6 space-y-4 border border-slate-200">
         <div className="flex items-center justify-between border-b pb-3 border-slate-100">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-teal-700 text-[24px]">account_circle</span>
+            <CivicLogo size="sm" showText={false} />
             <h3 className="font-bold text-base text-slate-900">
               {tab === 'signin' ? 'Sign In to CivicAI' : 'Create Citizen Account'}
             </h3>

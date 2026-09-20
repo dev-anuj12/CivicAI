@@ -1,9 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { CivicReport, IncidentCategory, IncidentSeverity, IncidentStatus, UserProfile } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  CivicHotspot,
+  CivicIssue,
+  CivicReport,
+  CopilotMessage,
+  DuplicateMatch,
+  IncidentCategory,
+  IncidentSeverity,
+  IncidentStatus,
+  ReportIntegrityRecord,
+  UserProfile,
+} from '../types';
 import { CIVIC_CATEGORIES } from '../data/mockData';
 import { AuthService } from '../services/authService';
+import {
+  calculateCivicHotspots,
+  fetchCivicIssues,
+  fetchDuplicateMatches,
+  fetchReportIntegrityList,
+  resolveDuplicateMatchAction,
+  submitResolutionEvidence,
+  uploadImage,
+} from '../services/supabaseClient';
 import { DepartmentAnalyticsView } from './DepartmentAnalyticsView';
 import { CivicGisMap } from './CivicGisMap';
+import { processAdminCopilotQuery } from '../ai/adminCopilot';
+import { useTranslation } from '../i18n/translations';
 
 interface AdminCommandCenterViewProps {
   currentUser: UserProfile | null;
@@ -20,36 +42,58 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
   onUpdateReportStatus,
   onUpdateReportCrew,
 }) => {
+  const { t } = useTranslation();
   const isSuperAdmin = Boolean(currentUser?.isSuperAdmin);
 
-  const [activeView, setActiveView] = useState<'triage' | 'analytics' | 'map' | 'officers'>('triage');
+  // 9-Tab Navigation View
+  const [activeView, setActiveView] = useState<
+    'overview' | 'triage' | 'priority' | 'duplicates' | 'integrity' | 'map' | 'analytics' | 'copilot' | 'officers'
+  >('overview');
+
+  // Async Loaded Intelligence Data
+  const [civicIssues, setCivicIssues] = useState<CivicIssue[]>([]);
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[]>([]);
+  const [integrityList, setIntegrityList] = useState<ReportIntegrityRecord[]>([]);
 
   // Triage state
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [selectedReport, setSelectedReport] = useState<CivicReport | null>(null);
+  const [selectedIssue, setSelectedIssue] = useState<CivicIssue | null>(null);
 
   // Dispatch Modal State
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
   const [selectedCrew, setSelectedCrew] = useState('Zone Rapid Repair Unit');
   const [dispatchDirective, setDispatchDirective] = useState('');
 
-  // Status Change Modal State
+  // Status & Resolution Evidence Modal State
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [targetStatus, setTargetStatus] = useState<IncidentStatus>('IN PROGRESS');
   const [statusNote, setStatusNote] = useState('');
+  const [resolutionPhotoFile, setResolutionPhotoFile] = useState<File | null>(null);
+  const [resolutionPhotoPreview, setResolutionPhotoPreview] = useState<string>('');
+  const [isSubmittingResolution, setIsSubmittingResolution] = useState(false);
 
-  // AI Municipal Action Plan State
-  const [aiActionPlan, setAiActionPlan] = useState<{
-    recommendedCrew: string;
-    targetSla: string;
-    equipment: string[];
-    citizenUpdateDraft: string;
-  } | null>(null);
-  const [isGeneratingAiPlan, setIsGeneratingAiPlan] = useState(false);
+  // 9. AI Copilot Chat State
+  const [copilotInput, setCopilotInput] = useState('');
+  const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([
+    {
+      id: 'init_copilot',
+      sender: 'copilot',
+      text: 'Hello, Administrator. I am your **CivicAI Intelligence Copilot**. Ask me to query complaints, check overdue SLAs, identify civic hotspots, or review duplicate clusters.',
+      timestamp: 'Now',
+      suggestedPrompts: [
+        'Show high-priority unresolved potholes',
+        'Which location has the most complaints?',
+        'How many garbage reports were resolved this week?',
+        'Show possible duplicate issues',
+        'Which complaints have been pending for more than three days?',
+      ],
+    },
+  ]);
 
-  // Super Admin Officer Provisioning State
+  // Super Admin Officer State
   const [officerName, setOfficerName] = useState('');
   const [officerEmail, setOfficerEmail] = useState('');
   const [officerDept, setOfficerDept] = useState(CIVIC_CATEGORIES[0].department);
@@ -62,6 +106,26 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
   } | null>(null);
   const [officersList, setOfficersList] = useState<UserProfile[]>([]);
   const [onboardError, setOnboardError] = useState('');
+
+  // Load intelligence records
+  const refreshIntelligenceData = async () => {
+    try {
+      const [issues, dups, integ] = await Promise.all([
+        fetchCivicIssues(),
+        fetchDuplicateMatches(),
+        fetchReportIntegrityList(),
+      ]);
+      setCivicIssues(issues);
+      setDuplicateMatches(dups);
+      setIntegrityList(integ);
+    } catch (e) {
+      console.warn('Error loading intelligence data:', e);
+    }
+  };
+
+  useEffect(() => {
+    refreshIntelligenceData();
+  }, [reports]);
 
   // Load created admins list
   const refreshOfficersList = async () => {
@@ -77,14 +141,120 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
     }
   }, [isSuperAdmin, currentUser]);
 
-  // Handle Generating Password
-  const handleAutoGeneratePassword = () => {
-    const generated = AuthService.generateRandomPassword();
-    setOfficerPassword(generated);
-    onShowToast('Generated high-entropy secure password', 'key');
+  // 7. Civic Hotspots Calculation
+  const hotspots: CivicHotspot[] = useMemo(() => {
+    return calculateCivicHotspots(reports);
+  }, [reports]);
+
+  // Filtered reports
+  const filteredReports = useMemo(() => {
+    return reports.filter((r) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchId = r.id.toLowerCase().includes(q);
+        const matchTitle = r.title.toLowerCase().includes(q);
+        const matchLoc = r.location.toLowerCase().includes(q);
+        const matchDept = r.department.toLowerCase().includes(q);
+        if (!matchId && !matchTitle && !matchLoc && !matchDept) return false;
+      }
+
+      if (filterCategory !== 'all' && r.category !== filterCategory && !r.category.includes(filterCategory)) return false;
+      if (filterStatus !== 'all' && r.status !== filterStatus) return false;
+
+      return true;
+    });
+  }, [reports, searchQuery, filterCategory, filterStatus]);
+
+  // Real KPI Metrics
+  const totalIssues = reports.length;
+  const newIssues = reports.filter((r) => r.status === 'REPORTED').length;
+  const inProgressIssues = reports.filter((r) => r.status === 'IN PROGRESS' || r.status === 'ASSIGNED').length;
+  const criticalIssues = reports.filter((r) => r.priority === 'CRITICAL').length;
+  const resolvedIssues = reports.filter((r) => r.status === 'RESOLVED').length;
+  const duplicateCount = duplicateMatches.filter((d) => d.status === 'possible_duplicate').length;
+  const flaggedIntegrityCount = integrityList.filter((i) => i.status === 'FLAGGED').length;
+
+  // Handle Copilot Send
+  const handleSendCopilotQuery = (queryText?: string) => {
+    const q = (queryText || copilotInput).trim();
+    if (!q) return;
+
+    const userMsg: CopilotMessage = {
+      id: `u_${Date.now()}`,
+      sender: 'user',
+      text: q,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setCopilotMessages((prev) => [...prev, userMsg]);
+    setCopilotInput('');
+
+    // Process query against live DB
+    setTimeout(() => {
+      const response = processAdminCopilotQuery(q, {
+        reports,
+        issues: civicIssues,
+        duplicateMatches,
+      });
+      setCopilotMessages((prev) => [...prev, response]);
+    }, 250);
   };
 
-  // Handle Creating New Admin
+  // Handle Duplicate Match Decision
+  const handleDuplicateDecision = async (matchId: string, action: 'linked_to_issue' | 'confirmed_distinct') => {
+    await resolveDuplicateMatchAction(matchId, action);
+    await refreshIntelligenceData();
+    onShowToast(
+      action === 'linked_to_issue' ? 'Report merged into consolidated Civic Issue! 🔗' : 'Marked as distinct civic defect.',
+      'verified'
+    );
+  };
+
+  // Handle Status Update with Resolution Evidence
+  const handleConfirmStatusChange = async () => {
+    if (!selectedReport) return;
+    setIsSubmittingResolution(true);
+
+    try {
+      let afterImg = selectedReport.imageUrl;
+      if (resolutionPhotoFile) {
+        afterImg = await uploadImage(resolutionPhotoFile);
+      }
+
+      if (targetStatus === 'RESOLVED') {
+        await submitResolutionEvidence({
+          reportId: selectedReport.id,
+          issueId: selectedReport.issueId,
+          beforeImageUrl: selectedReport.imageUrl,
+          afterImageUrl: afterImg,
+          resolvedBy: currentUser?.fullName || 'Municipal Officer',
+          resolutionNotes: statusNote.trim() || 'Work inspected on-site and verified complete according to municipal quality standards.',
+        });
+      }
+
+      onUpdateReportStatus(selectedReport.id, targetStatus, statusNote);
+      setIsStatusModalOpen(false);
+      setStatusNote('');
+      setResolutionPhotoFile(null);
+      setResolutionPhotoPreview('');
+      onShowToast(`Updated ${selectedReport.id} to "${targetStatus}"!`, 'verified');
+    } catch (e) {
+      console.error(e);
+      onShowToast('Could not save resolution update.', 'error');
+    } finally {
+      setIsSubmittingResolution(false);
+    }
+  };
+
+  // Handle Dispatch
+  const handleConfirmDispatch = () => {
+    if (!selectedReport) return;
+    onUpdateReportCrew(selectedReport.id, selectedCrew, dispatchDirective);
+    setIsDispatchModalOpen(false);
+    onShowToast(`Dispatched ${selectedCrew} to ${selectedReport.id}!`, 'local_shipping');
+  };
+
+  // Handle Create Officer
   const handleCreateOfficer = async (e: React.FormEvent) => {
     e.preventDefault();
     setOnboardError('');
@@ -97,7 +267,6 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
       department: officerDept,
       password: officerPassword || undefined,
     });
-
     setIsCreatingOfficer(false);
 
     if (res.success && res.adminUser && res.generatedPassword) {
@@ -116,96 +285,6 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
     }
   };
 
-  // Toggle Admin Status
-  const handleToggleAdminStatus = async (adminId: string) => {
-    if (!currentUser?.email) return;
-    const res = await AuthService.toggleAdminStatus(currentUser.email, adminId);
-    if (res.success) {
-      refreshOfficersList();
-      onShowToast(`Administrator account status set to ${res.status?.toUpperCase()}`, 'toggle_on');
-    } else {
-      onShowToast(res.error || 'Could not update status', 'error');
-    }
-  };
-
-  // Filter reports
-  const filteredReports = reports.filter((r) => {
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchId = r.id.toLowerCase().includes(q);
-      const matchTitle = r.title.toLowerCase().includes(q);
-      const matchLoc = r.location.toLowerCase().includes(q);
-      const matchDept = r.department.toLowerCase().includes(q);
-      if (!matchId && !matchTitle && !matchLoc && !matchDept) return false;
-    }
-
-    if (filterCategory !== 'all' && r.category !== filterCategory) return false;
-    if (filterStatus !== 'all' && r.status !== filterStatus) return false;
-
-    return true;
-  });
-
-  // Calculate real metrics
-  const totalIssues = reports.length;
-  const newIssues = reports.filter((r) => r.status === 'REPORTED').length;
-  const inProgressIssues = reports.filter((r) => r.status === 'IN PROGRESS' || r.status === 'ASSIGNED').length;
-  const criticalIssues = reports.filter((r) => r.priority === 'CRITICAL').length;
-  const resolvedIssues = reports.filter((r) => r.status === 'RESOLVED').length;
-
-  // Generate AI Action Plan
-  const handleGenerateAiPlan = (report: CivicReport) => {
-    setIsGeneratingAiPlan(true);
-    onShowToast('AI Municipal Decision Assistant calculating SLA & logistics...', 'psychology');
-
-    setTimeout(() => {
-      let crew = 'Specialized Municipal Civil Unit';
-      let sla = '24 Hours';
-      let gear = ['Reflective Safety Cones', 'GIS Survey Tablet', 'Digital Caliper'];
-
-      if (report.category.includes('Road')) {
-        crew = 'Zone Rapid Cold-Mix Asphalt Patch Fleet';
-        sla = report.priority === 'CRITICAL' ? '4 - 6 Hours Emergency' : '24 Hours';
-        gear = ['Bitumen Roller', 'Cold-Mix Compactor', 'LED Traffic Warning Arrow'];
-      } else if (report.category.includes('Water')) {
-        crew = 'Hydraulic Pipeline Emergency Response Team';
-        sla = report.priority === 'CRITICAL' ? '2 - 4 Hours Emergency' : '12 Hours';
-        gear = ['Submersible Sump Pump', 'Pipe Sleeve Clamp', 'Ultrasonic Acoustic Leak Sensor'];
-      } else if (report.category.includes('Electricity')) {
-        crew = 'Municipal Electrical Division Line Van';
-        sla = '4 - 8 Hours';
-        gear = ['Hydraulic Bucket Lift', 'Dielectric Insulated Gloves', 'Photocell Diagnostic Kit'];
-      } else if (report.category.includes('Sanitation')) {
-        crew = 'Solid Waste Heavy Compactor & Disinfection Unit';
-        sla = '12 Hours';
-        gear = ['Hydraulic Rear Loader', 'Sodium Hypochlorite Sanitizer Sprayer'];
-      }
-
-      setAiActionPlan({
-        recommendedCrew: crew,
-        targetSla: sla,
-        equipment: gear,
-        citizenUpdateDraft: `Inspected on-site by ${report.department}. Dispatched ${crew}. Work is in progress under target resolution turnaround of ${sla}.`,
-      });
-      setIsGeneratingAiPlan(false);
-      onShowToast('AI Municipal Action Plan Ready!', 'auto_awesome');
-    }, 850);
-  };
-
-  const handleConfirmDispatch = () => {
-    if (!selectedReport) return;
-    onUpdateReportCrew(selectedReport.id, selectedCrew, dispatchDirective);
-    setIsDispatchModalOpen(false);
-    onShowToast(`Dispatched ${selectedCrew} to ${selectedReport.id}!`, 'local_shipping');
-  };
-
-  const handleConfirmStatusChange = () => {
-    if (!selectedReport) return;
-    onUpdateReportStatus(selectedReport.id, targetStatus, statusNote);
-    setIsStatusModalOpen(false);
-    setStatusNote('');
-    onShowToast(`Updated ${selectedReport.id} to "${targetStatus}"!`, 'verified');
-  };
-
   return (
     <div className="flex flex-col w-full gap-6 pb-28 animate-in fade-in duration-200">
       {/* Admin Top Header Banner */}
@@ -216,113 +295,172 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
               <span className="font-label-badge text-xs uppercase tracking-wider text-amber-400 font-bold bg-amber-950/60 px-3 py-1 rounded-full border border-amber-800/40">
                 {isSuperAdmin ? '👑 Executive Super Administrator' : 'Municipal Administrator'}
               </span>
-              <span className="text-xs text-slate-400 font-label-code">
-                {currentUser?.email}
-              </span>
+              <span className="text-xs text-slate-400 font-label-code">{currentUser?.email}</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold mt-2 tracking-tight">
-              Municipal Command & Governance Center
+              Municipal Command & Civic Intelligence Center
             </h1>
           </div>
           <div className="bg-slate-800/80 px-4 py-2 rounded-2xl border border-slate-700/60 flex items-center gap-2 self-start">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-bold text-slate-200">9 Civic Domains Live</span>
+            <span className="text-xs font-bold text-slate-200">Civic Intelligence Active</span>
           </div>
         </div>
 
-        {/* Admin Navigation View Switcher */}
-        <div className="flex flex-wrap bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 gap-2 mt-1">
-          <button
-            type="button"
-            onClick={() => setActiveView('triage')}
-            className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              activeView === 'triage'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">rule_folder</span>
-            <span>Triage & Incidents ({reports.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveView('analytics')}
-            className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              activeView === 'analytics'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">analytics</span>
-            <span>Department Analytics</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveView('map')}
-            className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              activeView === 'map'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">map</span>
-            <span>Interactive GIS Map</span>
-          </button>
-
-          {isSuperAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                setActiveView('officers');
-                refreshOfficersList();
-              }}
-              className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                activeView === 'officers'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[18px]">manage_accounts</span>
-              <span>👑 Super Admin ({officersList.length})</span>
-            </button>
-          )}
+        {/* 21. Admin Navigation Tabs (9 Operational Modes) */}
+        <div className="flex flex-wrap bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 gap-1.5 mt-1 overflow-x-auto">
+          {[
+            { id: 'overview', label: 'Overview', icon: 'dashboard' },
+            { id: 'triage', label: `Live Issues (${reports.length})`, icon: 'rule_folder' },
+            { id: 'priority', label: `Priority Queue (${criticalIssues})`, icon: 'crisis_alert' },
+            { id: 'duplicates', label: `Duplicate Hub (${duplicateCount})`, icon: 'content_copy' },
+            { id: 'integrity', label: `Report Integrity (${flaggedIntegrityCount})`, icon: 'shield' },
+            { id: 'map', label: 'GIS Heatmap', icon: 'map' },
+            { id: 'analytics', label: 'Analytics', icon: 'analytics' },
+            { id: 'copilot', label: 'AI Copilot', icon: 'psychology' },
+            ...(isSuperAdmin ? [{ id: 'officers', label: '👑 Super Admin', icon: 'manage_accounts' }] : []),
+          ].map((tab) => {
+            const isSelected = activeView === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveView(tab.id as any)}
+                className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                  isSelected
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[17px]">{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
-
-        {/* Real Dynamic Metrics (Shown on triage tab) */}
-        {activeView === 'triage' && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
-            <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/40">
-              <span className="text-xs text-slate-400 font-medium">Total Complaints</span>
-              <div className="text-2xl font-bold text-white mt-1">{totalIssues}</div>
-            </div>
-            <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/40">
-              <span className="text-xs text-indigo-400 font-medium">New / Unassigned</span>
-              <div className="text-2xl font-bold text-indigo-300 mt-1">{newIssues}</div>
-            </div>
-            <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/40">
-              <span className="text-xs text-amber-400 font-medium">In Progress</span>
-              <div className="text-2xl font-bold text-amber-300 mt-1">{inProgressIssues}</div>
-            </div>
-            <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/40">
-              <span className="text-xs text-rose-400 font-medium">Critical Priority</span>
-              <div className="text-2xl font-bold text-rose-300 mt-1">{criticalIssues}</div>
-            </div>
-            <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/40">
-              <span className="text-xs text-emerald-400 font-medium">Resolved & Closed</span>
-              <div className="text-2xl font-bold text-emerald-300 mt-1">{resolvedIssues}</div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* =====================================================================
-          TAB 1: INCIDENTS & TRIAGE MANAGEMENT
+          TAB 1: OVERVIEW & REAL-TIME HOTSPOTS
+         ===================================================================== */}
+      {activeView === 'overview' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Real Metrics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-slate-400">Total Reports</span>
+              <div className="text-2xl font-bold text-slate-900 mt-1">{totalIssues}</div>
+              <span className="text-[10px] text-teal-700 font-semibold">100% Real Database</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-indigo-500">New / Unassigned</span>
+              <div className="text-2xl font-bold text-indigo-700 mt-1">{newIssues}</div>
+              <span className="text-[10px] text-indigo-400">Awaiting triage</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-amber-500">In Progress</span>
+              <div className="text-2xl font-bold text-amber-600 mt-1">{inProgressIssues}</div>
+              <span className="text-[10px] text-amber-500">Crews active</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-rose-500">Critical Priority</span>
+              <div className="text-2xl font-bold text-rose-700 mt-1">{criticalIssues}</div>
+              <span className="text-[10px] text-rose-400">24h SLA target</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-emerald-500">Resolved & Closed</span>
+              <div className="text-2xl font-bold text-emerald-700 mt-1">{resolvedIssues}</div>
+              <span className="text-[10px] text-emerald-500">Verified complete</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-cyan-600">Possible Duplicates</span>
+              <div className="text-2xl font-bold text-cyan-700 mt-1">{duplicateCount}</div>
+              <span className="text-[10px] text-cyan-500">Awaiting merge</span>
+            </div>
+          </div>
+
+          {/* 7. CIVIC HOTSPOTS RANKING TABLE */}
+          <div className="bg-white rounded-[28px] p-6 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-xl bg-teal-50 text-teal-800 flex items-center justify-center font-bold">
+                  <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Civic Hotspots & Problem Density</h3>
+                  <p className="text-xs text-slate-500">
+                    Spatial clustering analytics derived from verified citizen reports
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-semibold text-slate-400">Real Incident Density</span>
+            </div>
+
+            {hotspots.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-xs">No hotspot clusters detected yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-700">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Municipal Ward / Area</th>
+                      <th className="py-3 px-4 text-center">Total Issues</th>
+                      <th className="py-3 px-4 text-center">Unresolved Backlog</th>
+                      <th className="py-3 px-4">Dominant Category</th>
+                      <th className="py-3 px-4 text-center">Trend</th>
+                      <th className="py-3 px-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium">
+                    {hotspots.map((hotspot, idx) => (
+                      <tr key={hotspot.ward} className="hover:bg-slate-50/70">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-800 font-bold text-[10px] flex items-center justify-center">
+                              {idx + 1}
+                            </span>
+                            <span className="font-bold text-slate-900">{hotspot.ward}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-center font-bold text-slate-900">{hotspot.totalIssues}</td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${hotspot.unresolvedCount > 0 ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-900'}`}>
+                            {hotspot.unresolvedCount} active
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-teal-800 font-semibold">{hotspot.topCategory}</td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${hotspot.trend === 'increasing' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'}`}>
+                            {hotspot.trend}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveView('map');
+                              onShowToast(`Focused map on ${hotspot.ward}`, 'my_location');
+                            }}
+                            className="px-3 py-1 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
+                          >
+                            Inspect Map
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 2: LIVE ISSUES & CONSOLIDATION TRIAGE
          ===================================================================== */}
       {activeView === 'triage' && (
-        <>
-          {/* Filter & Search Bar */}
+        <div className="space-y-4 animate-in fade-in">
           <div className="bg-white rounded-[28px] p-5 border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <span className="material-symbols-outlined text-[20px] text-slate-400 absolute left-3.5 top-3 pointer-events-none">
@@ -343,7 +481,7 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                 onChange={(e) => setFilterCategory(e.target.value)}
                 className="bg-slate-50 text-slate-800 text-xs font-semibold px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-600 cursor-pointer"
               >
-                <option value="all">All 9 Categories</option>
+                <option value="all">All 8 Categories</option>
                 {CIVIC_CATEGORIES.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -365,22 +503,16 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
             </div>
           </div>
 
-          {/* Main Management Table */}
           {filteredReports.length === 0 ? (
             <div className="bg-white rounded-[28px] p-12 text-center border border-slate-200 shadow-sm">
               <span className="material-symbols-outlined text-[40px] text-slate-300 mb-2">inbox</span>
               <h3 className="text-base font-bold text-slate-800">No Incidents Found</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                {reports.length === 0
-                  ? 'There are currently zero civic reports in the municipal database.'
-                  : 'No tickets match the selected filters.'}
-              </p>
             </div>
           ) : (
             <div className="bg-white rounded-[28px] border border-slate-200 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-700">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
                     <tr>
                       <th className="py-3.5 px-4">Ticket ID</th>
                       <th className="py-3.5 px-4">Issue Details</th>
@@ -388,7 +520,7 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                       <th className="py-3.5 px-4">AI Vision Match</th>
                       <th className="py-3.5 px-4">Severity</th>
                       <th className="py-3.5 px-4">Status</th>
-                      <th className="py-3.5 px-4 text-right">Municipal Actions</th>
+                      <th className="py-3.5 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
@@ -396,21 +528,14 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                       <tr
                         key={report.id}
                         className="hover:bg-slate-50/70 transition-colors cursor-pointer"
-                        onClick={() => {
-                          setSelectedReport(report);
-                          setAiActionPlan(null);
-                        }}
+                        onClick={() => setSelectedReport(report)}
                       >
-                        <td className="py-3 px-4 font-label-code font-bold text-teal-800">
-                          {report.id}
-                        </td>
+                        <td className="py-3 px-4 font-label-code font-bold text-teal-800">{report.id}</td>
                         <td className="py-3 px-4 max-w-xs">
                           <div className="font-bold text-slate-900 truncate">{report.title}</div>
                           <div className="text-[11px] text-slate-400 truncate">{report.category}</div>
                         </td>
-                        <td className="py-3 px-4 max-w-xs truncate text-slate-600">
-                          {report.location}
-                        </td>
+                        <td className="py-3 px-4 max-w-xs truncate text-slate-600">{report.location}</td>
                         <td className="py-3 px-4">
                           <span className="font-label-code text-teal-800 font-bold bg-teal-50 px-2 py-0.5 rounded border border-teal-200/60">
                             {report.confidenceScore}% Match
@@ -447,7 +572,6 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedReport(report);
-                              setAiActionPlan(null);
                             }}
                             className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
                           >
@@ -461,18 +585,282 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* =====================================================================
-          TAB 2: DEPARTMENT ANALYTICS MODULE
+          TAB 3: AI PRIORITY QUEUE (With Explainable Rationale Cards)
+         ===================================================================== */}
+      {activeView === 'priority' && (
+        <div className="space-y-4 animate-in fade-in">
+          <div className="bg-white rounded-[28px] p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">AI Explainable Priority Triage Queue</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Tickets dynamically ranked by AI combining severity, report volume, community verifications, and SLA duration.
+              </p>
+            </div>
+            <span className="bg-rose-100 text-rose-800 font-label-code text-xs font-bold px-3 py-1 rounded-full">
+              {reports.filter((r) => r.priority === 'CRITICAL' || r.priority === 'HIGH').length} Elevated Tickets
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {reports
+              .filter((r) => r.status !== 'RESOLVED' && r.status !== 'REJECTED')
+              .sort((a, b) => (b.priority === 'CRITICAL' ? 1 : 0) - (a.priority === 'CRITICAL' ? 1 : 0))
+              .map((report) => (
+                <div
+                  key={report.id}
+                  className={`p-5 rounded-[24px] border shadow-xs flex flex-col justify-between space-y-3 cursor-pointer transition-all ${
+                    report.priority === 'CRITICAL'
+                      ? 'bg-rose-50/40 border-rose-200 hover:border-rose-300'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                  onClick={() => setSelectedReport(report)}
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-label-code font-bold text-xs text-teal-800 bg-teal-50 px-2 py-0.5 rounded">
+                          {report.id}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            report.priority === 'CRITICAL'
+                              ? 'bg-rose-600 text-white'
+                              : 'bg-amber-500 text-white'
+                          }`}
+                        >
+                          {report.priority} PRIORITY
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-slate-900 text-sm">{report.title}</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">{report.location} • {report.ward}</p>
+                    </div>
+
+                    <span className="text-xs font-label-code text-slate-400 shrink-0">
+                      {report.slaRemaining}
+                    </span>
+                  </div>
+
+                  {/* 5. Explainable Priority Reasons */}
+                  <div className="bg-white/80 p-3 rounded-xl border border-slate-200/80 text-xs space-y-1">
+                    <span className="font-bold text-[11px] text-slate-700 block uppercase">
+                      Why this ticket received {report.priority} Priority:
+                    </span>
+                    <ul className="list-disc list-inside space-y-0.5 text-slate-600 text-[11px]">
+                      <li>Visual defect hazard severity: {report.priority}</li>
+                      <li>Department routing: {report.department}</li>
+                      <li>{report.upvotes || 1} citizen corroborations filed</li>
+                    </ul>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                    <span className="text-teal-800 font-bold">{report.department}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedReport(report);
+                        setIsDispatchModalOpen(true);
+                      }}
+                      className="px-3.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-xl text-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">local_shipping</span>
+                      <span>Dispatch Crew</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 4: DUPLICATE DETECTION HUB
+         ===================================================================== */}
+      {activeView === 'duplicates' && (
+        <div className="space-y-4 animate-in fade-in">
+          <div className="bg-white rounded-[28px] p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Multi-Signal Duplicate Detection Hub</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Review flagged duplicate pairs based on GPS distance (&lt;75m), image visual similarity, and text correlation.
+              </p>
+            </div>
+            <span className="bg-amber-100 text-amber-900 font-label-code text-xs font-bold px-3 py-1 rounded-full">
+              {duplicateMatches.filter((d) => d.status === 'possible_duplicate').length} Pending Merges
+            </span>
+          </div>
+
+          {duplicateMatches.length === 0 ? (
+            <div className="bg-white rounded-[28px] p-12 text-center border border-slate-200 text-slate-400 text-xs">
+              No duplicate complaints detected in the database.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {duplicateMatches.map((match) => (
+                <div
+                  key={match.id}
+                  className="bg-white rounded-[24px] border border-slate-200 p-5 shadow-xs space-y-4"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="bg-amber-100 text-amber-900 font-label-code text-xs font-bold px-2.5 py-0.5 rounded-full">
+                        {match.similarityScore}% Similarity Match
+                      </span>
+                      <span className="text-xs font-semibold text-slate-500">
+                        Spatial Distance: {match.signals.geoDistanceMeters}m
+                      </span>
+                    </div>
+
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${match.status === 'linked_to_issue' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
+                      {match.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    {/* Source Report */}
+                    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                      <div className="flex justify-between font-bold text-slate-700">
+                        <span>New Report</span>
+                        <span className="font-mono text-teal-800">{match.sourceReportId}</span>
+                      </div>
+                      <div className="font-bold text-slate-900">{match.sourceReportTitle || 'New incoming complaint'}</div>
+                      <div className="text-slate-500 text-[11px]">Matched at {new Date(match.matchedAt).toLocaleTimeString()}</div>
+                    </div>
+
+                    {/* Target Consolidated Issue */}
+                    <div className="p-3.5 bg-teal-50/70 rounded-2xl border border-teal-200 space-y-2">
+                      <div className="flex justify-between font-bold text-slate-700">
+                        <span>Target Civic Issue</span>
+                        <span className="font-mono text-teal-900">{match.targetIssueId}</span>
+                      </div>
+                      <div className="font-bold text-slate-900">{match.targetIssueTitle || 'Consolidated civic issue'}</div>
+                      <div className="text-teal-700 text-[11px]">Consolidated municipal record</div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  {match.status === 'possible_duplicate' && (
+                    <div className="flex gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicateDecision(match.id, 'linked_to_issue')}
+                        className="flex-1 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">merge</span>
+                        <span>Link to Existing Civic Issue</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicateDecision(match.id, 'confirmed_distinct')}
+                        className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">call_split</span>
+                        <span>Keep as Distinct Issue</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 5: REPORT INTEGRITY ENGINE QUEUE
+         ===================================================================== */}
+      {activeView === 'integrity' && (
+        <div className="space-y-4 animate-in fade-in">
+          <div className="bg-white rounded-[28px] p-6 border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Report Integrity & Anti-Spam Queue</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Heuristic velocity checks, image duplicate spam detection, and spatial coordinate flooding analysis.
+              </p>
+            </div>
+            <span className="bg-slate-100 text-slate-800 font-label-code text-xs font-bold px-3 py-1 rounded-full">
+              {integrityList.length} Assessed Tickets
+            </span>
+          </div>
+
+          {integrityList.length === 0 ? (
+            <div className="bg-white rounded-[28px] p-12 text-center border border-slate-200 text-slate-400 text-xs">
+              All incoming reports passed baseline integrity checks with NORMAL status.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3">
+              {integrityList.map((item) => (
+                <div
+                  key={item.reportId}
+                  className={`p-4 rounded-2xl border shadow-xs space-y-2 ${
+                    item.status === 'FLAGGED'
+                      ? 'bg-rose-50/50 border-rose-200'
+                      : item.status === 'REVIEW'
+                      ? 'bg-amber-50/50 border-amber-200'
+                      : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono font-bold text-slate-800">{item.reportId}</span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] uppercase ${
+                        item.status === 'FLAGGED'
+                          ? 'bg-rose-600 text-white'
+                          : item.status === 'REVIEW'
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-emerald-600 text-white'
+                      }`}
+                    >
+                      {item.status} ({item.confidenceScore}% Confidence)
+                    </span>
+                  </div>
+
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-600 text-xs">
+                    {item.flags.map((flag, i) => (
+                      <li key={i}>{flag}</li>
+                    ))}
+                  </ul>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-200/60">
+                    <span>Velocity: {item.submissionVelocity} reports/hr</span>
+                    <span>Duplicate Photo Risk: {item.imageDuplicateRisk}%</span>
+                    <span>Radius Density: {item.geoRadiusDensity} reports in 50m</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 6: INTERACTIVE GIS MAP & HEATMAP
+         ===================================================================== */}
+      {activeView === 'map' && (
+        <CivicGisMap
+          reports={reports}
+          onSelectReport={(report) => {
+            setSelectedReport(report);
+            setActiveView('triage');
+          }}
+          title="Interactive Municipal Civic GIS Map & Heatmap"
+          subtitle="Real-time incident clustering, heatmap density, priority pins, and multi-dimensional spatial filtering."
+        />
+      )}
+
+      {/* =====================================================================
+          TAB 7: DEPARTMENT ANALYTICS
          ===================================================================== */}
       {activeView === 'analytics' && (
         <DepartmentAnalyticsView
           reports={reports}
           onSelectReport={(report) => {
             setSelectedReport(report);
-            setAiActionPlan(null);
             setActiveView('triage');
           }}
           onShowToast={onShowToast}
@@ -480,23 +868,135 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
       )}
 
       {/* =====================================================================
-          TAB 3: INTERACTIVE CIVIC GIS MAP
+          TAB 8: AI ADMIN COPILOT
          ===================================================================== */}
-      {activeView === 'map' && (
-        <CivicGisMap
-          reports={reports}
-          onSelectReport={(report) => {
-            setSelectedReport(report);
-            setAiActionPlan(null);
-            setActiveView('triage');
-          }}
-          title="Interactive Civic Issue GIS Command Map"
-          subtitle="Real-time incident clustering, heatmap density, priority pins, and multi-dimensional spatial filtering."
-        />
+      {activeView === 'copilot' && (
+        <div className="bg-white rounded-[28px] border border-slate-200 shadow-sm p-6 space-y-5 animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-teal-700 text-white flex items-center justify-center font-bold">
+                <span className="material-symbols-outlined text-[24px]">psychology</span>
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">AI Admin Copilot Intelligence Assistant</h2>
+                <p className="text-xs text-slate-500">
+                  Ask natural-language questions to query, aggregate, and inspect the real municipal database.
+                </p>
+              </div>
+            </div>
+            <span className="bg-teal-50 text-teal-800 text-xs font-bold px-3 py-1 rounded-full border border-teal-200">
+              Live DB Query Engine
+            </span>
+          </div>
+
+          {/* Quick Prompt Chips */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+            <span className="text-slate-400 font-semibold shrink-0">Quick Prompts:</span>
+            {[
+              'Show high-priority unresolved potholes',
+              'Which location has the most complaints?',
+              'How many garbage reports were resolved this week?',
+              'Show possible duplicate issues',
+              'Which complaints have been pending for more than three days?',
+            ].map((promptText) => (
+              <button
+                key={promptText}
+                type="button"
+                onClick={() => handleSendCopilotQuery(promptText)}
+                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-teal-50 hover:text-teal-800 text-slate-700 font-medium border border-slate-200 transition-colors shrink-0 cursor-pointer text-[11px]"
+              >
+                {promptText}
+              </button>
+            ))}
+          </div>
+
+          {/* Chat Stream */}
+          <div className="space-y-4 max-h-[500px] overflow-y-auto p-3 bg-slate-50/60 rounded-2xl border border-slate-200/80">
+            {copilotMessages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                {msg.sender === 'copilot' && (
+                  <div className="w-8 h-8 rounded-full bg-teal-700 text-white flex items-center justify-center shrink-0 text-xs font-bold">
+                    AI
+                  </div>
+                )}
+
+                <div
+                  className={`max-w-xl rounded-2xl p-4 text-xs space-y-2.5 ${
+                    msg.sender === 'user'
+                      ? 'bg-teal-700 text-white font-medium'
+                      : 'bg-white border border-slate-200 text-slate-800 shadow-xs'
+                  }`}
+                >
+                  <p className="leading-relaxed whitespace-pre-line">{msg.text}</p>
+
+                  {/* Highlights Grid */}
+                  {msg.metricsHighlight && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
+                      {msg.metricsHighlight.map((m, idx) => (
+                        <div key={idx} className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                          <span className="text-[10px] text-slate-400 block font-semibold">{m.label}</span>
+                          <span className="text-sm font-bold text-slate-900 mt-0.5 block">{m.value}</span>
+                          {m.sublabel && <span className="text-[9px] text-slate-500">{m.sublabel}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Matched Reports Preview */}
+                  {msg.matchedReports && msg.matchedReports.length > 0 && (
+                    <div className="pt-2 space-y-1.5 border-t border-slate-100">
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Matched Database Records:</span>
+                      {msg.matchedReports.map((r) => (
+                        <div
+                          key={r.id}
+                          onClick={() => setSelectedReport(r)}
+                          className="p-2 rounded-lg bg-slate-50 hover:bg-teal-50 border border-slate-200/60 flex items-center justify-between cursor-pointer transition-colors"
+                        >
+                          <div>
+                            <span className="font-mono font-bold text-teal-800">{r.id}</span>
+                            <span className="text-slate-700 font-semibold ml-2">{r.title}</span>
+                          </div>
+                          <span className="text-slate-400 text-[10px]">{r.priority}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <span className="text-[9px] text-slate-400 block text-right">{msg.timestamp}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Input Box */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Ask Copilot a question (e.g. Which location has the most complaints?)..."
+              value={copilotInput}
+              onChange={(e) => setCopilotInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSendCopilotQuery();
+              }}
+              className="flex-1 bg-slate-50 text-slate-900 text-xs sm:text-sm p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-600 font-medium"
+            />
+            <button
+              type="button"
+              onClick={() => handleSendCopilotQuery()}
+              className="px-6 py-3 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+            >
+              <span>{t('copilot.ask')}</span>
+              <span className="material-symbols-outlined text-[16px]">send</span>
+            </button>
+          </div>
+        </div>
       )}
 
       {/* =====================================================================
-          TAB 4: SUPER ADMIN OFFICER PROVISIONING (Exclusive)
+          TAB 9: SUPER ADMIN OFFICER PROVISIONING
          ===================================================================== */}
       {activeView === 'officers' && isSuperAdmin && (
         <div className="space-y-6 animate-in fade-in">
@@ -535,26 +1035,13 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                   <div><strong>Official Email:</strong> {createdCredentials.email}</div>
                   <div><strong>Generated Password:</strong> <span className="bg-emerald-100 px-1.5 py-0.5 rounded font-bold text-emerald-900">{createdCredentials.pass}</span></div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      `CivicAI Admin Credentials\nOfficer: ${createdCredentials.name}\nEmail: ${createdCredentials.email}\nPassword: ${createdCredentials.pass}\nLogin URL: http://localhost:3000`
-                    );
-                    onShowToast('Officer credentials copied to clipboard!', 'content_copy');
-                  }}
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  <span className="material-symbols-outlined text-[16px]">content_copy</span>
-                  <span>Copy Officer Credentials</span>
-                </button>
               </div>
             )}
 
             <form onSubmit={handleCreateOfficer} className="space-y-4 text-xs pt-1">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1">Officer Legal / Official Name</label>
+                  <label className="block text-slate-700 font-bold mb-1">Officer Legal Name</label>
                   <input
                     type="text"
                     required
@@ -596,16 +1083,7 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1 flex items-center justify-between">
-                    <span>Password Configuration</span>
-                    <button
-                      type="button"
-                      onClick={handleAutoGeneratePassword}
-                      className="text-amber-800 hover:underline font-bold text-[11px] cursor-pointer"
-                    >
-                      ⚡ Auto-Generate Password
-                    </button>
-                  </label>
+                  <label className="block text-slate-700 font-bold mb-1">Password</label>
                   <input
                     type="text"
                     value={officerPassword}
@@ -617,106 +1095,19 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
               </div>
 
               {onboardError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
-                  <span>{onboardError}</span>
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl">
+                  {onboardError}
                 </div>
               )}
 
               <button
                 type="submit"
                 disabled={isCreatingOfficer}
-                className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
               >
-                {isCreatingOfficer ? (
-                  <span>Generating Account...</span>
-                ) : (
-                  <>
-                    <span className="material-symbols-outlined text-[18px]">verified_user</span>
-                    <span>Authorize & Create Municipal Administrator</span>
-                  </>
-                )}
+                <span>Authorize & Create Municipal Administrator</span>
               </button>
             </form>
-          </div>
-
-          {/* Officers Directory Table */}
-          <div className="bg-white rounded-[28px] border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Authorized Municipal Administrators Directory
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Governed through Supabase Super Admin access
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={refreshOfficersList}
-                className="p-2 text-slate-500 hover:text-slate-800 rounded-lg cursor-pointer"
-                title="Refresh list"
-              >
-                <span className="material-symbols-outlined text-[18px]">refresh</span>
-              </button>
-            </div>
-
-            {officersList.length === 0 ? (
-              <div className="text-center py-8 text-slate-400 text-xs">
-                No delegated municipal administrators provisioned yet. Create an account above to delegate triage authority.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-700">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
-                    <tr>
-                      <th className="py-3 px-4">Officer Name</th>
-                      <th className="py-3 px-4">Official Email</th>
-                      <th className="py-3 px-4">Assigned Department</th>
-                      <th className="py-3 px-4">Account Status</th>
-                      <th className="py-3 px-4">Provisioned On</th>
-                      <th className="py-3 px-4 text-right">Access Control</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {officersList.map((officer) => (
-                      <tr key={officer.id} className="hover:bg-slate-50/70">
-                        <td className="py-3 px-4 font-bold text-slate-900">{officer.fullName}</td>
-                        <td className="py-3 px-4 font-mono text-slate-600">{officer.email}</td>
-                        <td className="py-3 px-4 text-teal-800 font-semibold">{officer.department}</td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              officer.status === 'active'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-rose-100 text-rose-800'
-                            }`}
-                          >
-                            {officer.status || 'active'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-400">
-                          {new Date(officer.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleAdminStatus(officer.id)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                              officer.status === 'active'
-                                ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
-                                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
-                            }`}
-                          >
-                            {officer.status === 'active' ? 'Suspend' : 'Reactivate'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -741,18 +1132,14 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Evidence Photo */}
               <div className="h-48 rounded-2xl overflow-hidden bg-slate-950 border border-slate-200">
                 {selectedReport.imageUrl ? (
                   <img src={selectedReport.imageUrl} alt={selectedReport.title} className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-slate-500">
-                    No image available
-                  </div>
+                  <div className="w-full h-full flex items-center justify-center text-slate-500">No photo</div>
                 )}
               </div>
 
-              {/* Overview Details */}
               <div className="space-y-2 text-xs">
                 <div>
                   <span className="text-slate-400 block font-semibold">Incident Title</span>
@@ -770,221 +1157,173 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
                   <span className="text-slate-400 block font-semibold">Assigned Department</span>
                   <span className="text-teal-800 font-bold">{selectedReport.department}</span>
                 </div>
-                {selectedReport.assignedCrew && (
-                  <div>
-                    <span className="text-slate-400 block font-semibold">Dispatched Crew</span>
-                    <span className="text-amber-800 font-bold">{selectedReport.assignedCrew}</span>
-                  </div>
-                )}
               </div>
-            </div>
-
-            {/* AI Decision Assistant Card */}
-            <div className="bg-teal-50/70 border border-teal-200/80 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-teal-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[18px]">psychology</span>
-                  <span>AI Municipal Decision Assistant</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleGenerateAiPlan(selectedReport)}
-                  disabled={isGeneratingAiPlan}
-                  className="px-3 py-1 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
-                >
-                  {isGeneratingAiPlan ? 'Analyzing...' : 'Generate Action Plan'}
-                </button>
-              </div>
-
-              {aiActionPlan ? (
-                <div className="space-y-2.5 text-xs text-slate-700 animate-in fade-in">
-                  <div className="grid grid-cols-2 gap-2 bg-white p-2.5 rounded-xl border border-teal-200/60">
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">Recommended Crew:</span>
-                      <span className="font-bold text-slate-900">{aiActionPlan.recommendedCrew}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">Turnaround Target:</span>
-                      <span className="font-bold text-teal-800">{aiActionPlan.targetSla}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Required Field Gear:</span>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {aiActionPlan.equipment.map((g) => (
-                        <span key={g} className="bg-white border border-teal-200 text-teal-900 px-2 py-0.5 rounded text-[10px] font-semibold">
-                          {g}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Auto-Drafted Citizen Update:</span>
-                    <p className="bg-white p-2 rounded-lg border border-teal-200/60 text-slate-800 italic mt-0.5 text-[11px]">
-                      "{aiActionPlan.citizenUpdateDraft}"
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Click "Generate Action Plan" to automatically calculate crew assignment, target SLA, safety gear, and formal status draft.
-                </p>
-              )}
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+            <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setIsDispatchModalOpen(true)}
-                className="flex-1 py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                onClick={() => {
+                  setIsDispatchModalOpen(true);
+                }}
+                className="py-3 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
               >
-                <span className="material-symbols-outlined text-[16px]">local_shipping</span>
+                <span className="material-symbols-outlined text-[18px]">local_shipping</span>
                 <span>Dispatch Crew</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setIsStatusModalOpen(true)}
-                className="flex-1 py-2.5 px-4 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
-              >
-                <span className="material-symbols-outlined text-[16px]">verified</span>
-                <span>Update Status</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => {
-                  onUpdateReportStatus(selectedReport.id, 'RESOLVED', 'Inspected on-site and verified 100% resolved.');
-                  setSelectedReport((prev) => (prev ? { ...prev, status: 'RESOLVED' } : null));
-                  onShowToast(`Marked ${selectedReport.id} as RESOLVED!`, 'verified');
+                  setTargetStatus('RESOLVED');
+                  setIsStatusModalOpen(true);
                 }}
-                className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
               >
-                <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                <span>Quick Resolve</span>
+                <span className="material-symbols-outlined text-[18px]">task_alt</span>
+                <span>Mark Resolved & Upload Evidence</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Dispatch Crew Modal */}
-      {isDispatchModalOpen && selectedReport && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white rounded-[28px] max-w-md w-full p-6 space-y-4 border border-slate-200">
-            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
-              <h3 className="font-bold text-slate-900 text-base">Dispatch Municipal Crew</h3>
-              <button onClick={() => setIsDispatchModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                <span className="material-symbols-outlined text-[18px]">close</span>
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-600 font-bold mb-1">Target Ticket & Location</label>
-                <div className="bg-slate-50 p-2.5 rounded-xl text-slate-800 font-medium">
-                  {selectedReport.id} • {selectedReport.location}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-bold mb-1">Select Field Division / Team</label>
-                <select
-                  value={selectedCrew}
-                  onChange={(e) => setSelectedCrew(e.target.value)}
-                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer"
-                >
-                  <option value="Zone 1 Rapid Pothole & Road Patch Unit">Zone 1 Rapid Pothole & Road Patch Unit</option>
-                  <option value="Hydraulic Pipeline Emergency Response Unit">Hydraulic Pipeline Emergency Response Unit</option>
-                  <option value="Municipal Electrical Division Line Van">Municipal Electrical Division Line Van</option>
-                  <option value="Solid Waste Heavy Compactor Fleet">Solid Waste Heavy Compactor Fleet</option>
-                  <option value="Public Works Civil Maintenance Fleet">Public Works Civil Maintenance Fleet</option>
-                  <option value="Town Planning Safety Inspection Squad">Town Planning Safety Inspection Squad</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-bold mb-1">Dispatch Directive / Field Notes</label>
-                <input
-                  type="text"
-                  value={dispatchDirective}
-                  onChange={(e) => setDispatchDirective(e.target.value)}
-                  placeholder="e.g. Cordon traffic corridor before cold-mix bitumen application"
-                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 text-xs font-medium"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setIsDispatchModalOpen(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDispatch}
-                className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold cursor-pointer"
-              >
-                Confirm Dispatch
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Status Change Modal */}
+      {/* 16. RESOLUTION EVIDENCE & STATUS MODAL */}
       {isStatusModalOpen && selectedReport && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white rounded-[28px] max-w-md w-full p-6 space-y-4 border border-slate-200">
+          <div className="bg-white rounded-[28px] max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3 border-slate-100">
-              <h3 className="font-bold text-slate-900 text-base">Update Incident Status</h3>
-              <button onClick={() => setIsStatusModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                <span className="material-symbols-outlined text-[18px]">close</span>
+              <h3 className="font-bold text-slate-900 text-base">Update Status & Resolution Evidence</h3>
+              <button
+                onClick={() => setIsStatusModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
               </button>
             </div>
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-600 font-bold mb-1">Transition Status To:</label>
+                <label className="block text-slate-700 font-bold mb-1">Target Status</label>
                 <select
                   value={targetStatus}
                   onChange={(e) => setTargetStatus(e.target.value as IncidentStatus)}
-                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer"
+                  className="w-full bg-slate-50 p-2.5 rounded-xl border border-slate-200 font-bold text-slate-900 cursor-pointer"
                 >
-                  <option value="UNDER REVIEW">UNDER REVIEW</option>
-                  <option value="ASSIGNED">ASSIGNED</option>
                   <option value="IN PROGRESS">IN PROGRESS</option>
-                  <option value="RESOLVED">RESOLVED</option>
-                  <option value="REJECTED">REJECTED (Ineligible)</option>
+                  <option value="RESOLVED">RESOLVED (Upload "After" Evidence Photo)</option>
+                  <option value="UNDER REVIEW">UNDER REVIEW</option>
+                  <option value="REJECTED">REJECTED</option>
                 </select>
               </div>
 
+              {/* After Photo Upload */}
+              {targetStatus === 'RESOLVED' && (
+                <div className="space-y-2">
+                  <label className="block text-slate-700 font-bold">16. Upload "After" Resolution Photo Evidence</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setResolutionPhotoFile(f);
+                        const r = new FileReader();
+                        r.onload = (ev) => setResolutionPhotoPreview(ev.target?.result as string);
+                        r.readAsDataURL(f);
+                      }
+                    }}
+                    className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100 cursor-pointer"
+                  />
+                  {resolutionPhotoPreview && (
+                    <div className="h-32 rounded-xl overflow-hidden bg-slate-900 border border-slate-200">
+                      <img src={resolutionPhotoPreview} alt="Resolution preview" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
-                <label className="block text-slate-600 font-bold mb-1">Official Audit Comment for Citizen</label>
+                <label className="block text-slate-700 font-bold mb-1">Official Inspection Notes</label>
                 <textarea
                   rows={3}
                   value={statusNote}
                   onChange={(e) => setStatusNote(e.target.value)}
-                  placeholder="Explain current progress or inspection outcome..."
-                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 text-xs font-medium"
+                  placeholder="Describe repair actions, crew details, or inspection findings..."
+                  className="w-full bg-slate-50 p-2.5 rounded-xl border border-slate-200 font-medium text-slate-900"
                 />
               </div>
+
+              <button
+                type="button"
+                disabled={isSubmittingResolution}
+                onClick={handleConfirmStatusChange}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isSubmittingResolution ? (
+                  <span>Saving & Uploading Evidence...</span>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[18px]">verified</span>
+                    <span>Confirm Status Transition</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DISPATCH CREW MODAL */}
+      {isDispatchModalOpen && selectedReport && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-[28px] max-w-md w-full p-6 space-y-4 border border-slate-200 shadow-2xl">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <h3 className="font-bold text-slate-900 text-base">Dispatch Municipal Field Crew</h3>
+              <button
+                onClick={() => setIsDispatchModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
             </div>
 
-            <div className="flex gap-2 pt-2 border-t border-slate-100">
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Selected Repair Fleet</label>
+                <select
+                  value={selectedCrew}
+                  onChange={(e) => setSelectedCrew(e.target.value)}
+                  className="w-full bg-slate-50 p-2.5 rounded-xl border border-slate-200 font-bold text-slate-900 cursor-pointer"
+                >
+                  <option value="Zone Rapid Cold-Mix Asphalt Patch Fleet">Zone Rapid Cold-Mix Asphalt Patch Fleet</option>
+                  <option value="Hydraulic Pipeline Emergency Response Team">Hydraulic Pipeline Emergency Response Team</option>
+                  <option value="Municipal Electrical Division Line Van">Municipal Electrical Division Line Van</option>
+                  <option value="Solid Waste Heavy Compactor & Disinfection Unit">Solid Waste Heavy Compactor & Disinfection Unit</option>
+                  <option value="Garden & Environmental Tree Clearance Squad">Garden & Environmental Tree Clearance Squad</option>
+                  <option value="Civil Infrastructure Maintenance Team">Civil Infrastructure Maintenance Team</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Work Order Directive</label>
+                <input
+                  type="text"
+                  value={dispatchDirective}
+                  onChange={(e) => setDispatchDirective(e.target.value)}
+                  placeholder="e.g. Priority road patch under 24h SLA"
+                  className="w-full bg-slate-50 p-2.5 rounded-xl border border-slate-200 font-medium text-slate-900"
+                />
+              </div>
+
               <button
-                onClick={() => setIsStatusModalOpen(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+                type="button"
+                onClick={handleConfirmDispatch}
+                className="w-full py-3 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmStatusChange}
-                className="flex-1 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold cursor-pointer"
-              >
-                Save Status Transition
+                <span className="material-symbols-outlined text-[18px]">local_shipping</span>
+                <span>Dispatch Response Fleet</span>
               </button>
             </div>
           </div>

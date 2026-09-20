@@ -547,11 +547,15 @@ export const CivicGisMap: React.FC<CivicGisMapProps> = ({
               className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-medium rounded-xl p-2 focus:ring-2 focus:ring-teal-600 focus:outline-none cursor-pointer"
             >
               <option value="all">All Categories</option>
-              {CIVIC_CATEGORIES.map((cat) => (
-                <option key={cat.id} value={cat.name}>
-                  {cat.name}
-                </option>
-              ))}
+              <option value="Roads & Transportation">🛣️ Roads / Potholes</option>
+              <option value="Sanitation & Waste">🗑️ Waste / Garbage</option>
+              <option value="Water & Drainage">💧 Water / Drainage</option>
+              <option value="Electricity & Lighting">⚡ Streetlights / Electrical</option>
+              <option value="Environment">🌳 Environment / Trees</option>
+              <option value="Public Infrastructure">🏛️ Public Infrastructure</option>
+              <option value="Construction">🚧 Construction Debris</option>
+              <option value="Traffic & Signage">🚦 Traffic & Signage</option>
+              <option value="Other Civic Issues">❓ Other Issues</option>
             </select>
           </div>
 

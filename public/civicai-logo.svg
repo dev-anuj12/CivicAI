@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60" fill="none">
+  <defs>
+    <linearGradient id="logoCivicGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D9488" />
+      <stop offset="50%" stop-color="#0F766E" />
+      <stop offset="100%" stop-color="#0369A1" />
+    </linearGradient>
+    <linearGradient id="logoAccentGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+  </defs>
+
+  <!-- Logo Emblem -->
+  <g transform="translate(6, 6) scale(0.48)">
+    <rect x="0" y="0" width="100" height="100" rx="28" fill="url(#logoCivicGrad)" />
+    <!-- City Outline -->
+    <path d="M20 78 V52 H34 V36 H50 V46 H66 V58 H80 V78 Z" fill="#ffffff" fill-opacity="0.22" />
+    <!-- AI Line -->
+    <path d="M26 72 L42 54 L54 62 L74 38" stroke="url(#logoAccentGrad)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="26" cy="72" r="5" fill="#34D399" />
+    <circle cx="42" cy="54" r="5" fill="#38BDF8" />
+    <circle cx="54" cy="62" r="5" fill="#34D399" />
+    <circle cx="74" cy="38" r="6" fill="#FFFFFF" stroke="#0D9488" stroke-width="3" />
+    <!-- AI Spark -->
+    <path d="M74 22 L76.5 28 L82 30 L76.5 32 L74 38 L71.5 32 L66 30 L71.5 28 Z" fill="#FDE047" />
+  </g>
+
+  <!-- Brand Typography -->
+  <text x="68" y="36" font-family="Plus Jakarta Sans, system-ui, sans-serif" font-weight="800" font-size="24" fill="#0F172A" letter-spacing="-0.5">
+    Civic<tspan fill="#0D9488">AI</tspan>
+  </text>
+  <text x="69" y="49" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="9" fill="#0F766E" letter-spacing="1.2">
+    SMART CIVIC INTELLIGENCE
+  </text>
+</svg>

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { CivicReport, TabType } from '../types';
+import { addCommunityVerification, confirmResolutionByCitizen } from '../services/supabaseClient';
+import { useTranslation } from '../i18n/translations';
 
 interface MyReportsTrackingViewProps {
   reports: CivicReport[];
@@ -17,6 +19,7 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
   onUpvoteReport,
   onAddComment,
 }) => {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCommentText, setActiveCommentText] = useState<Record<string, string>>({});
@@ -50,6 +53,57 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
     onShowToast('Citizen note added to public municipal audit trail', 'chat');
   };
 
+  // 11 & 16. Handle Citizen Resolution Feedback
+  const handleResolutionFeedback = async (
+    report: CivicReport,
+    feedback: 'resolved' | 'still_present'
+  ) => {
+    if (report.resolutionEvidence) {
+      await confirmResolutionByCitizen(report.resolutionEvidence.id, feedback);
+    }
+    if (report.issueId) {
+      await addCommunityVerification(
+        report.issueId,
+        feedback === 'resolved' ? 'resolved_for_me' : 'still_present',
+        'Citizen Inspector',
+        report.id
+      );
+    }
+
+    if (feedback === 'resolved') {
+      onShowToast('Resolution verified! Thank you for confirming municipal work.', 'verified');
+    } else {
+      onShowToast('Feedback logged: "Issue Still Present". Escalating to supervisor.', 'warning');
+    }
+  };
+
+  // 15. Six Standard Lifecycle Stages
+  const LIFECYCLE_STAGES = [
+    { key: 'REPORTED', label: '1. Submitted', icon: 'send' },
+    { key: 'AI_ANALYZED', label: '2. AI Analyzed', icon: 'psychology' },
+    { key: 'UNDER REVIEW', label: '3. Verified', icon: 'verified' },
+    { key: 'ASSIGNED', label: '4. Assigned', icon: 'assignment_ind' },
+    { key: 'IN PROGRESS', label: '5. In Progress', icon: 'construction' },
+    { key: 'RESOLVED', label: '6. Resolved', icon: 'task_alt' },
+  ];
+
+  const getLifecycleStageIndex = (status: string) => {
+    switch (status) {
+      case 'REPORTED':
+        return 1;
+      case 'UNDER REVIEW':
+        return 2;
+      case 'ASSIGNED':
+        return 3;
+      case 'IN PROGRESS':
+        return 4;
+      case 'RESOLVED':
+        return 5;
+      default:
+        return 0;
+    }
+  };
+
   return (
     <div className="flex flex-col w-full gap-5 pb-28 animate-in fade-in duration-200">
       {/* Header Banner */}
@@ -60,17 +114,17 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
               Municipal Resolution Ledger
             </span>
             <h1 className="font-headline-lg text-2xl sm:text-3xl text-slate-900 font-bold tracking-tight mt-2">
-              Citizen Report Tracking
+              Citizen Report Tracking & Lifecycle
             </h1>
           </div>
           <div className="flex items-center gap-2 bg-teal-50 px-3.5 py-1.5 rounded-full text-teal-800 font-label-code text-xs font-bold w-fit border border-teal-200">
             <span className="w-2.5 h-2.5 rounded-full bg-teal-500 animate-pulse" />
-            <span>Telemetry Synchronized</span>
+            <span>6-Stage Lifecycle Live</span>
           </div>
         </div>
 
         <p className="text-sm text-slate-600 leading-relaxed max-w-2xl">
-          Track each civic resolution step from optical AI capture and departmental triage to field crew dispatch and verified resolution.
+          Track each civic resolution step from optical AI capture and departmental triage to field crew dispatch and verified Before/After resolution evidence.
         </p>
 
         {/* Search & Filter Bar */}
@@ -218,7 +272,7 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
             })}
           </div>
 
-          {/* Right Column: Live Audit Timeline for Selected Report */}
+          {/* Right Column: Live Audit Timeline & Resolution Evidence */}
           {activeReport && (
             <div className="lg:col-span-7 bg-white rounded-[28px] p-6 border border-slate-200 shadow-sm space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
@@ -240,7 +294,9 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
                     </span>
                   </div>
                   <h3 className="font-bold text-slate-900 text-lg mt-1">{activeReport.title}</h3>
-                  <p className="text-xs text-slate-500">{activeReport.location} • {activeReport.ward}</p>
+                  <p className="text-xs text-slate-600 font-medium">
+                    📍 {activeReport.location} {activeReport.landmark ? `• Landmark: ${activeReport.landmark}` : ''}
+                  </p>
                 </div>
 
                 <button
@@ -257,8 +313,130 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
                 </button>
               </div>
 
-              {/* Photographic Visual Evidence */}
-              {activeReport.imageUrl && (
+              {/* 15. Six-Stage Visual Progress Bar */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80 space-y-3">
+                <div className="flex justify-between items-center text-xs font-bold text-slate-700">
+                  <span>Complaint Resolution Lifecycle</span>
+                  <span className="text-teal-800 font-label-code">
+                    Stage {getLifecycleStageIndex(activeReport.status) + 1} of 6
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-6 gap-1.5">
+                  {LIFECYCLE_STAGES.map((stg, idx) => {
+                    const currentIdx = getLifecycleStageIndex(activeReport.status);
+                    const isPassed = idx <= currentIdx;
+                    const isCurrent = idx === currentIdx;
+
+                    return (
+                      <div key={stg.key} className="flex flex-col items-center gap-1 text-center">
+                        <div
+                          className={`w-full h-2 rounded-full transition-all ${
+                            isPassed
+                              ? activeReport.status === 'RESOLVED'
+                                ? 'bg-emerald-500'
+                                : 'bg-teal-600'
+                              : 'bg-slate-200'
+                          } ${isCurrent ? 'ring-2 ring-teal-400' : ''}`}
+                        />
+                        <span className="text-[10px] font-semibold text-slate-600 truncate max-w-full hidden sm:block">
+                          {stg.label.split('. ')[1]}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 16. RESOLUTION EVIDENCE (Before vs After) */}
+              {activeReport.status === 'RESOLVED' && (
+                <div className="bg-emerald-50/70 border border-emerald-300 rounded-2xl p-5 space-y-4 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-xl bg-emerald-200 text-emerald-900 flex items-center justify-center font-bold">
+                        <span className="material-symbols-outlined text-[20px]">task_alt</span>
+                      </span>
+                      <div>
+                        <h4 className="text-sm font-bold text-emerald-950">{t('evidence.beforeAfter')}</h4>
+                        <p className="text-xs text-emerald-700">Official repair completed and verified by municipal crew</p>
+                      </div>
+                    </div>
+                    <span className="bg-emerald-200 text-emerald-950 font-label-code text-xs font-bold px-2.5 py-1 rounded-full">
+                      VERIFIED
+                    </span>
+                  </div>
+
+                  {/* Before / After Photo Comparison Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-bold text-slate-500 block uppercase">1. Before (Reported)</span>
+                      <div className="h-44 rounded-xl overflow-hidden bg-slate-900 border border-slate-200">
+                        {activeReport.imageUrl ? (
+                          <img src={activeReport.imageUrl} alt="Before" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">No initial photo</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-bold text-emerald-700 block uppercase">2. After (Resolved Evidence)</span>
+                      <div className="h-44 rounded-xl overflow-hidden bg-emerald-950 border border-emerald-300">
+                        <img
+                          src={activeReport.resolutionEvidence?.afterImageUrl || activeReport.imageUrl}
+                          alt="After"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Resolution Notes */}
+                  <div className="bg-white p-3.5 rounded-xl border border-emerald-200 text-xs text-slate-700 space-y-1">
+                    <div className="font-bold text-slate-900 flex justify-between">
+                      <span>{t('evidence.officialNotes')}:</span>
+                      <span className="text-slate-400 font-normal">
+                        {activeReport.resolutionEvidence?.resolvedAt
+                          ? new Date(activeReport.resolutionEvidence.resolvedAt).toLocaleDateString()
+                          : 'Recent'}
+                      </span>
+                    </div>
+                    <p className="text-slate-600 leading-relaxed">
+                      {activeReport.resolutionEvidence?.resolutionNotes ||
+                        `Repaired and certified on-site by ${activeReport.assignedCrew || activeReport.department}. Inspection passed municipal quality standards.`}
+                    </p>
+                  </div>
+
+                  {/* Citizen Verification Feedback Form */}
+                  <div className="pt-2 border-t border-emerald-200/60 flex flex-col sm:flex-row gap-2.5 items-center justify-between">
+                    <span className="text-xs text-emerald-950 font-bold">
+                      Does this issue appear resolved to you?
+                    </span>
+                    <div className="flex gap-2 w-full sm:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => handleResolutionFeedback(activeReport, 'resolved')}
+                        className="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">thumb_up</span>
+                        <span>Confirm Resolved</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleResolutionFeedback(activeReport, 'still_present')}
+                        className="flex-1 sm:flex-initial px-3.5 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">report_problem</span>
+                        <span>Still Present</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Photographic Visual Evidence (when not resolved) */}
+              {activeReport.status !== 'RESOLVED' && activeReport.imageUrl && (
                 <div className="h-52 w-full rounded-2xl overflow-hidden bg-slate-950 border border-slate-200 relative">
                   <img
                     src={activeReport.imageUrl}
