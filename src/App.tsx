@@ -257,7 +257,9 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-6xl mx-auto pt-20 px-3 sm:px-6">
+      <main className={`flex-1 w-full mx-auto pt-20 px-3 sm:px-6 transition-all ${
+        currentTab === 'admin-command-center' ? 'max-w-7xl xl:max-w-[1440px]' : 'max-w-6xl'
+      }`}>
         {currentTab === 'citizen-portal' && (
           <CitizenPortalView
             reports={reports}

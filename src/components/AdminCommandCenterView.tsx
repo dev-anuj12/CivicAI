@@ -311,60 +311,159 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
     }
   };
 
+  const navTabs = [
+    { id: 'overview', label: 'Overview', icon: 'dashboard', count: null, desc: 'Executive KPIs & Density' },
+    { id: 'triage', label: 'Live Issues', icon: 'rule_folder', count: reports.length, desc: 'All Incident Reports' },
+    { id: 'priority', label: 'Priority Queue', icon: 'crisis_alert', count: criticalIssues, desc: 'AI Triage & SLAs' },
+    { id: 'duplicates', label: 'Duplicate Hub', icon: 'content_copy', count: duplicateCount, desc: 'Clustered Defect Merges' },
+    { id: 'integrity', label: 'Report Integrity', icon: 'shield', count: flaggedIntegrityCount, desc: 'AI Trust & Verification' },
+    { id: 'map', label: 'GIS Heatmap', icon: 'map', count: null, desc: 'Geospatial Hotspots' },
+    { id: 'analytics', label: 'Analytics', icon: 'analytics', count: null, desc: 'Ward & SLA Metrics' },
+    { id: 'copilot', label: 'AI Copilot', icon: 'psychology', count: null, desc: 'Natural Language Queries' },
+    ...(isSuperAdmin ? [{ id: 'officers', label: 'Super Admin', icon: 'manage_accounts', count: null, desc: 'Admin Management' }] : []),
+  ];
+
   return (
     <div className="flex flex-col w-full gap-6 pb-28 animate-in fade-in duration-200">
-      {/* Admin Top Header Banner */}
-      <div className="bg-slate-900 text-white rounded-[32px] p-6 sm:p-8 shadow-sm flex flex-col gap-4 border border-slate-800">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-label-badge text-xs uppercase tracking-wider text-amber-400 font-bold bg-amber-950/60 px-3 py-1 rounded-full border border-amber-800/40">
-                {isSuperAdmin ? '👑 Executive Super Administrator' : 'Municipal Administrator'}
+      {/* 2-Column Command Center Dashboard Layout: Left Navigation Sidebar + Right Largest Operational Frame */}
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-6 items-start">
+        
+        {/* =====================================================================
+            LEFT SIDEBAR: EXECUTIVE MUNICIPAL NAVIGATION & SYSTEM STATUS
+           ===================================================================== */}
+        <aside className="space-y-4 lg:sticky lg:top-24">
+          {/* 1. Municipal Command Hub Identity Card */}
+          <div className="bg-slate-900 text-white rounded-[24px] p-5 shadow-sm border border-slate-800 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="font-label-badge text-[10px] uppercase tracking-wider text-amber-400 font-bold bg-amber-950/60 px-2.5 py-0.5 rounded-full border border-amber-800/40">
+                {isSuperAdmin ? '👑 Super Admin' : 'Municipal Admin'}
               </span>
-              <span className="text-xs text-slate-400 font-label-code">{currentUser?.email}</span>
+              <div className="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-full border border-slate-700/60">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[10px] font-bold text-slate-200">Active</span>
+              </div>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-bold mt-2 tracking-tight">
-              Municipal Command & Civic Intelligence Center
-            </h1>
-          </div>
-          <div className="bg-slate-800/80 px-4 py-2 rounded-2xl border border-slate-700/60 flex items-center gap-2 self-start">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-bold text-slate-200">Civic Intelligence Active</span>
-          </div>
-        </div>
 
-        {/* 21. Admin Navigation Tabs (9 Operational Modes) */}
-        <div className="flex flex-wrap bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 gap-1.5 mt-1 overflow-x-auto">
-          {[
-            { id: 'overview', label: 'Overview', icon: 'dashboard' },
-            { id: 'triage', label: `Live Issues (${reports.length})`, icon: 'rule_folder' },
-            { id: 'priority', label: `Priority Queue (${criticalIssues})`, icon: 'crisis_alert' },
-            { id: 'duplicates', label: `Duplicate Hub (${duplicateCount})`, icon: 'content_copy' },
-            { id: 'integrity', label: `Report Integrity (${flaggedIntegrityCount})`, icon: 'shield' },
-            { id: 'map', label: 'GIS Heatmap', icon: 'map' },
-            { id: 'analytics', label: 'Analytics', icon: 'analytics' },
-            { id: 'copilot', label: 'AI Copilot', icon: 'psychology' },
-            ...(isSuperAdmin ? [{ id: 'officers', label: '👑 Super Admin', icon: 'manage_accounts' }] : []),
-          ].map((tab) => {
-            const isSelected = activeView === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveView(tab.id as any)}
-                className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                  isSelected
-                    ? 'bg-amber-500 text-slate-950 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[17px]">{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+            <div>
+              <h2 className="text-base font-bold tracking-tight text-white">Municipal Command Center</h2>
+              <p className="text-xs text-slate-400 truncate mt-0.5 font-label-code">
+                {currentUser?.email || 'admin@civicai.gov.in'}
+              </p>
+            </div>
+          </div>
+
+          {/* 2. Navigation Module Tabs (Strictly Ordered) */}
+          <nav className="bg-white rounded-[24px] p-2.5 border border-slate-200 shadow-xs flex flex-col gap-1">
+            <div className="px-3 pt-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Command Modules
+            </div>
+
+            {navTabs.map((tab) => {
+              const isSelected = activeView === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveView(tab.id as any);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                    isSelected
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className={`material-symbols-outlined text-[19px] shrink-0 ${
+                        isSelected ? 'text-amber-400' : 'text-slate-500'
+                      }`}
+                    >
+                      {tab.icon}
+                    </span>
+                    <span className="truncate">{tab.label}</span>
+                  </div>
+                  {tab.count !== null && (
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                        isSelected
+                          ? 'bg-amber-400 text-slate-950 font-extrabold'
+                          : tab.id === 'priority' && criticalIssues > 0
+                          ? 'bg-rose-100 text-rose-700 font-bold'
+                          : tab.id === 'duplicates' && duplicateCount > 0
+                          ? 'bg-cyan-100 text-cyan-700 font-bold'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* 3. Platform Health Diagnostics Card */}
+          <div className="bg-slate-900 text-slate-300 rounded-[24px] p-4 border border-slate-800 text-xs space-y-2.5">
+            <div className="flex items-center justify-between text-[11px] font-bold text-white">
+              <span className="flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-teal-400 text-[16px]">sensors</span>
+                Civic Intelligence
+              </span>
+              <span className="text-emerald-400 text-[10px] font-bold">100% Online</span>
+            </div>
+            <div className="text-[11px] text-slate-400 space-y-1.5 pt-1.5 border-t border-slate-800">
+              <div className="flex justify-between">
+                <span>AI Vision Pipeline:</span>
+                <span className="text-slate-200 font-medium">Ready</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Duplicate Clustering:</span>
+                <span className="text-slate-200 font-medium">Active</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Local Ledger:</span>
+                <span className="text-teal-300 font-medium">Synchronized</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* =====================================================================
+            RIGHT COLUMN: THE BIGGEST FRAME (MAIN OPERATIONAL DISPLAY)
+           ===================================================================== */}
+        <main className="flex-1 min-w-0 space-y-6">
+          {/* Top Operational Context Header Bar */}
+          <div className="bg-white rounded-[24px] px-6 py-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span>Municipal Command Center</span>
+                <span>/</span>
+                <span className="text-teal-700 font-extrabold">{navTabs.find((t) => t.id === activeView)?.label}</span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-0.5 tracking-tight">
+                {activeView === 'overview' && 'Executive Summary & Problem Density'}
+                {activeView === 'triage' && 'Live Defect Reports & Department Dispatch'}
+                {activeView === 'priority' && 'AI Explainable Priority Triage Queue'}
+                {activeView === 'duplicates' && 'Duplicate Defect Merging Hub'}
+                {activeView === 'integrity' && 'Report Integrity & Tampering Analysis'}
+                {activeView === 'map' && 'GIS Geospatial Hotspots & Distribution'}
+                {activeView === 'analytics' && 'Civic SLA Performance & Department Analytics'}
+                {activeView === 'copilot' && 'CivicAI Copilot — Natural Language Intelligence'}
+                {activeView === 'officers' && 'Municipal Officer Provisioning & Security'}
+              </h1>
+            </div>
+
+            <button
+              type="button"
+              onClick={refreshIntelligenceData}
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
+            >
+              <span className="material-symbols-outlined text-[16px]">refresh</span>
+              <span>Sync Data</span>
+            </button>
+          </div>
 
       {/* =====================================================================
           TAB 1: OVERVIEW & REAL-TIME HOTSPOTS
@@ -1137,6 +1236,8 @@ export const AdminCommandCenterView: React.FC<AdminCommandCenterViewProps> = ({
           </div>
         </div>
       )}
+        </main>
+      </div>
 
       {/* Selected Report Inspection Drawer / Modal */}
       {selectedReport && (
