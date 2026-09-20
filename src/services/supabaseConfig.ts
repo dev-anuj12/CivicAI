@@ -6,8 +6,8 @@ export interface SupabaseSession {
 
 const SESSION_KEY = 'civicai_supabase_session_v1';
 
-const DEFAULT_SUPABASE_URL = 'https://fdtjvqswswrzlnmboloz.supabase.co';
-const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_SliNHobOmilFxptwD4kNlw_sKN56IFk';
+const DEFAULT_SUPABASE_URL = '';
+const DEFAULT_SUPABASE_ANON_KEY = '';
 
 function cleanEnvValue(raw?: string, defaultValue = ''): string {
   if (!raw) return defaultValue;
