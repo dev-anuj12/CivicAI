@@ -138,6 +138,26 @@ export async function getValidAccessToken(): Promise<string | null> {
   return refreshed.access_token;
 }
 
+export function isUuid(str?: string | null): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+export function getJwtPayload(token: string): any {
+  try {
+    const payload = token.split('.')[1];
+    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+  } catch {
+    return {};
+  }
+}
+
+export function getUserIdFromJwt(token: string): string {
+  const payload = getJwtPayload(token);
+  return typeof payload.sub === 'string' ? payload.sub : '';
+}
+
 export async function getResponseError(response: Response): Promise<string> {
   return getErrorMessage(response);
 }
+

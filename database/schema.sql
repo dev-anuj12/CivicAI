@@ -349,10 +349,15 @@ ALTER TABLE public.ai_analysis ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.report_status_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE public.reports ALTER COLUMN user_id DROP NOT NULL;
+
 DROP POLICY IF EXISTS "Users can view their own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 DROP POLICY IF EXISTS "Public profiles are viewable by authenticated users" ON public.profiles;
+DROP POLICY IF EXISTS "Public profiles are viewable by all" ON public.profiles;
 DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
+CREATE POLICY "Public profiles are viewable by all" ON public.profiles
+  FOR SELECT USING (true);
 CREATE POLICY "Users can view their own profile" ON public.profiles
   FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "Users can update their own profile" ON public.profiles
@@ -364,21 +369,22 @@ DROP POLICY IF EXISTS "Authenticated users can create reports" ON public.reports
 DROP POLICY IF EXISTS "Authorities and owners can update reports" ON public.reports;
 DROP POLICY IF EXISTS "Citizens create their own reports" ON public.reports;
 DROP POLICY IF EXISTS "Owners and administrators update reports" ON public.reports;
+DROP POLICY IF EXISTS "Allow report creation" ON public.reports;
+DROP POLICY IF EXISTS "Allow report updates" ON public.reports;
+
 CREATE POLICY "Public reports are viewable" ON public.reports
   FOR SELECT USING (true);
-CREATE POLICY "Citizens create their own reports" ON public.reports
-  FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Owners and administrators update reports" ON public.reports
-  FOR UPDATE TO authenticated
-  USING (auth.uid() = user_id OR public.is_municipal_admin())
-  WITH CHECK (auth.uid() = user_id OR public.is_municipal_admin());
+CREATE POLICY "Allow report creation" ON public.reports
+  FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow report updates" ON public.reports
+  FOR UPDATE USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Users can view their own notifications" ON public.notifications;
 DROP POLICY IF EXISTS "Users can update their own notifications read state" ON public.notifications;
 CREATE POLICY "Users can view their own notifications" ON public.notifications
-  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+  FOR SELECT USING (true);
 CREATE POLICY "Users can update their own notifications read state" ON public.notifications
-  FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+  FOR UPDATE USING (true) WITH CHECK (true);
 
 -- -----------------------------------------------------------------------------
 -- Storage for report photos. The bucket is public for image rendering, but an

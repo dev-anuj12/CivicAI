@@ -18,8 +18,10 @@ import {
 import { AuthService } from './authService';
 import {
   getResponseError,
+  getUserIdFromJwt,
   getValidAccessToken,
   isLiveSupabaseConfigured,
+  isUuid,
   SUPABASE_ANON_KEY,
   SUPABASE_URL,
 } from './supabaseConfig';
@@ -99,9 +101,10 @@ function normalizeSeverity(severity: string | null | undefined): IncidentSeverit
 }
 
 function serializeReport(report: CivicReport) {
+  const validUserId = isUuid(report.userId) ? report.userId : null;
   return {
     report_id: report.id,
-    user_id: report.userId,
+    user_id: validUserId,
     category: report.category,
     subcategory: report.subcategory || report.category,
     title: report.title,
@@ -370,14 +373,28 @@ export async function fetchAllReports(): Promise<CivicReport[]> {
   }
 
   try {
+    const accessToken = await getValidAccessToken();
+    const headers = accessToken ? authHeaders(accessToken) : publicHeaders();
     const response = await fetch(`${SUPABASE_URL}/rest/v1/reports?select=*&order=created_at.desc`, {
-      headers: publicHeaders(),
+      headers,
     });
     if (!response.ok) throw toErrorMessage('Could not load shared reports', await getResponseError(response));
 
-    const reports = (await response.json()).map(mapSupabaseRowToReport);
-    PersistentStore.set(STORAGE_KEYS.REPORTS, reports);
-    return reports;
+    const cloudReports = (await response.json()).map(mapSupabaseRowToReport);
+    
+    // Merge any locally cached reports that have not synced yet
+    const localReports = PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
+    const mergedMap = new Map<string, CivicReport>();
+    cloudReports.forEach((r: CivicReport) => mergedMap.set(r.id, r));
+    localReports.forEach((r: CivicReport) => {
+      if (!mergedMap.has(r.id)) mergedMap.set(r.id, r);
+    });
+    const combined = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+
+    PersistentStore.set(STORAGE_KEYS.REPORTS, combined);
+    return combined;
   } catch (err) {
     console.warn('Falling back to local persistent store for reports:', err);
     return PersistentStore.get<CivicReport[]>(STORAGE_KEYS.REPORTS, []);
@@ -397,15 +414,34 @@ export async function createReport(report: CivicReport): Promise<CivicReport> {
     updateLocalReport(report);
   } else {
     try {
-      const accessToken = await requireCloudToken();
+      const accessToken = await getValidAccessToken();
+      const headers = accessToken
+        ? authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' })
+        : publicHeaders({ 'Content-Type': 'application/json', Prefer: 'return=representation' });
+
+      // If user has a valid cloud JWT session, attach their Supabase auth UUID
+      if (accessToken && (!report.userId || !isUuid(report.userId))) {
+        const uid = getUserIdFromJwt(accessToken);
+        if (uid && isUuid(uid)) {
+          report.userId = uid;
+        }
+      }
+
       const response = await fetch(`${SUPABASE_URL}/rest/v1/reports`, {
         method: 'POST',
-        headers: authHeaders(accessToken, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
+        headers,
         body: JSON.stringify(serializeReport(report)),
       });
+
       if (response.ok) {
         const rows = await response.json();
-        if (rows[0]) report = mapSupabaseRowToReport(rows[0]);
+        if (rows && rows[0]) {
+          report = mapSupabaseRowToReport(rows[0]);
+        }
+        console.log('✅ Report saved to Supabase Cloud ledger:', report.id);
+      } else {
+        const errorText = await getResponseError(response);
+        console.warn('Supabase Cloud reports POST returned error:', errorText);
       }
       updateLocalReport(report);
     } catch (e) {
