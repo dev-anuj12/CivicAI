@@ -281,9 +281,27 @@ CREATE POLICY "Authorities insert resolution evidence" ON public.resolution_evid
 
 
 -- -----------------------------------------------------------------------------
--- Auth bootstrap. Every Supabase Auth sign-up gets a citizen profile automatically.
+-- -----------------------------------------------------------------------------
+-- Auth bootstrap & Auto-Confirm Email
+-- Every Supabase Auth sign-up gets email confirmed automatically and a citizen profile.
 -- No browser can assign itself an administrator role.
 -- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.auto_confirm_user_email()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  NEW.email_confirmed_at = COALESCE(NEW.email_confirmed_at, timezone('utc'::text, now()));
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_auto_confirm ON auth.users;
+CREATE TRIGGER on_auth_user_auto_confirm
+  BEFORE INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.auto_confirm_user_email();
+
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
