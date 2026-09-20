@@ -370,6 +370,7 @@ export const ReportIssueFlowView: React.FC<ReportIssueFlowViewProps> = ({
         id: generatedId,
         userId: reporterUser.id,
         reporterName: reporterUser.fullName || 'Verified Citizen Reporter',
+        reporterContact: reporterUser.email || undefined,
         title: finalTitle,
         category,
         categoryIcon: activeCategoryMeta.icon,

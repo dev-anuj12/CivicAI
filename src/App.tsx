@@ -298,6 +298,7 @@ export default function App() {
 
         {currentTab === 'my-reports-tracking' && (
           <MyReportsTrackingView
+            currentUser={currentUser}
             reports={reports}
             onNavigate={handleNavigate}
             onShowToast={showToast}

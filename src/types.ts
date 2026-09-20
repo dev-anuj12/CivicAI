@@ -70,6 +70,7 @@ export interface CivicReport {
   id: string;
   userId?: string;
   reporterName?: string;
+  reporterContact?: string;
   title: string;
   category: IncidentCategory;
   subcategory?: string;

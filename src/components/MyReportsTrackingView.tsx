@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { CivicReport, TabType } from '../types';
+import { CivicReport, TabType, UserProfile } from '../types';
 import { addCommunityVerification, confirmResolutionByCitizen } from '../services/supabaseClient';
 import { useTranslation } from '../i18n/translations';
 
 interface MyReportsTrackingViewProps {
+  currentUser?: UserProfile | null;
   reports: CivicReport[];
   onNavigate: (tab: TabType) => void;
   onShowToast: (msg: string, icon?: string) => void;
@@ -13,6 +14,7 @@ interface MyReportsTrackingViewProps {
 }
 
 export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
+  currentUser,
   reports,
   onNavigate,
   onShowToast,
@@ -20,13 +22,26 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
   onAddComment,
 }) => {
   const { t } = useTranslation();
+  const [scopeFilter, setScopeFilter] = useState<'my' | 'all'>('my');
   const [filter, setFilter] = useState<'all' | 'active' | 'resolved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCommentText, setActiveCommentText] = useState<Record<string, string>>({});
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
 
+  // My reports vs All reports
+  const userReports = currentUser
+    ? reports.filter(
+        (r) =>
+          (r.userId && r.userId === currentUser.id) ||
+          (currentUser.email && r.reporterContact === currentUser.email) ||
+          (currentUser.fullName && r.reporterName === currentUser.fullName)
+      )
+    : [];
+
+  const scopedReports = scopeFilter === 'my' && userReports.length > 0 ? userReports : reports;
+
   // Filtered reports
-  const filteredReports = reports.filter((r) => {
+  const filteredReports = scopedReports.filter((r) => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchId = r.id.toLowerCase().includes(q);
@@ -127,6 +142,34 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
           Track each civic resolution step from optical AI capture and departmental triage to field crew dispatch and verified Before/After resolution evidence.
         </p>
 
+        {/* Scope Toggle: My Reports vs All Reports */}
+        {currentUser && userReports.length > 0 && (
+          <div className="flex items-center gap-2 pt-2">
+            <button
+              onClick={() => setScopeFilter('my')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                scopeFilter === 'my'
+                  ? 'bg-teal-700 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">person</span>
+              <span>My Filed Reports ({userReports.length})</span>
+            </button>
+            <button
+              onClick={() => setScopeFilter('all')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                scopeFilter === 'all'
+                  ? 'bg-teal-700 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">public</span>
+              <span>All City Issues ({reports.length})</span>
+            </button>
+          </div>
+        )}
+
         {/* Search & Filter Bar */}
         <div className="flex flex-col sm:flex-row gap-3 pt-1">
           <div className="relative flex-1 flex items-center">
@@ -158,7 +201,7 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
                 filter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              All ({reports.length})
+              All ({scopedReports.length})
             </button>
             <button
               onClick={() => setFilter('active')}
@@ -166,7 +209,7 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
                 filter === 'active' ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Active ({reports.filter((r) => r.status !== 'RESOLVED').length})
+              Active ({scopedReports.filter((r) => r.status !== 'RESOLVED').length})
             </button>
             <button
               onClick={() => setFilter('resolved')}
@@ -174,7 +217,7 @@ export const MyReportsTrackingView: React.FC<MyReportsTrackingViewProps> = ({
                 filter === 'resolved' ? 'bg-white text-emerald-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Resolved ({reports.filter((r) => r.status === 'RESOLVED').length})
+              Resolved ({scopedReports.filter((r) => r.status === 'RESOLVED').length})
             </button>
           </div>
         </div>
